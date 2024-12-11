@@ -29,3 +29,17 @@ exclude = [
     ".gitignore"
 ]
 edition = "2018"
+
+[features]
+default = ["gssapi", "log", "openssl", "unix"]
+gssapi = ["dep:libgssapi", "constellation-common/gssapi"]
+log = ["dep:log", "constellation-common/log"]
+openssl = ["dep:openssl", "constellation-common/openssl"]
+openssl-vendored = ["constellation-common/openssl-vendored"]
+unix = ["constellation-common/unix"]
+
+[dependencies]
+constellation-common = { git = "https://github.com/constellation-system/constellation-common.git", branch = "import", default-features = false }
+libgssapi = { version = "0.7", optional = true }
+log = { version = "0.4", optional = true }
+openssl = { version = "0.10", optional = true }
