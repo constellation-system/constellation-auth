@@ -41,6 +41,6 @@ unix = ["constellation-common/unix"]
 
 [dependencies]
 constellation-common = { git = "https://github.com/constellation-system/constellation-common.git", branch = "import", default-features = false }
-libgssapi = { version = "0.7", optional = true }
+libgssapi = { version = "0.8", optional = true }
 log = { version = "0.4", optional = true }
 openssl = { version = "0.10", optional = true }
