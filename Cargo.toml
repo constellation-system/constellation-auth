@@ -19,9 +19,10 @@
 [package]
 name = "constellation-auth"
 description = "Authentication/Authorization API for the Constellation distributed systems platform"
+repository = "https://github.com/constellation-system/constellation-auth"
 version = "0.0.0"
 authors = [ "Eric McCorkle <eric.mccorkle@jhuapl.edu>" ]
-rust-version = "1.82"
+rust-version = "1.81"
 license = "AGPL-3.0-only"
 keywords = ["authentication", "authorization"]
 categories = ["network-programming", "authentication"]
@@ -29,3 +30,17 @@ exclude = [
     ".gitignore"
 ]
 edition = "2018"
+
+[features]
+default = ["gssapi", "log", "openssl", "unix"]
+gssapi = ["dep:libgssapi", "constellation-common/gssapi"]
+log = ["dep:log", "constellation-common/log"]
+openssl = ["dep:openssl", "constellation-common/openssl"]
+openssl-vendored = ["constellation-common/openssl-vendored"]
+unix = ["constellation-common/unix"]
+
+[dependencies]
+constellation-common = { git = "https://github.com/constellation-system/constellation-common.git", branch = "devel", default-features = false }
+libgssapi = { version = "0.8", optional = true }
+log = { version = "0.4", optional = true }
+openssl = { version = "0.10", optional = true }
