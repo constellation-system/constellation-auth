@@ -35,6 +35,19 @@ use log::trace;
 
 use crate::cred::Credentials;
 
+/// Reporter for authenticated messages.
+pub trait AuthNMsgReporter<Prin, Msg> {
+    /// Errors that can occur reporting messages.
+    type RecvError: Display + ScopedError;
+
+    /// Receive an authenticated message.
+    fn report_auth_msg(
+        &mut self,
+        prin: &Prin,
+        msg: Msg
+    ) -> Result<(), Self::RecvError>;
+}
+
 /// Trait for session authenticators.
 ///
 /// These authenticators have access to the raw underlying session,
