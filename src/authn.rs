@@ -31,6 +31,7 @@ use std::sync::Arc;
 
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
+use constellation_common::nonblock::NonblockResult;
 use log::trace;
 
 use crate::cred::Credentials;
@@ -62,6 +63,15 @@ pub trait SessionAuthN<Flow: Credentials + Read + Write> {
     type Prin: Clone + Display + Eq + Hash;
     /// Type of errors that can occur during authentication.
     type Error: Display + ScopedError;
+
+    /// Attempt to perform session authentication without blocking.
+    ///
+    /// This will return an [AuthNResult] containing a
+    /// [Prin](SessionAuthN::Prin) in the case of success.
+    fn session_authn_nonblock(
+        &self,
+        flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error>;
 
     /// Perform session authentication.
     ///
@@ -228,6 +238,14 @@ where
     type Error = SessionAuthNError<Flow::CredError, Infallible>;
     type Prin = Prin;
 
+    #[inline]
+    fn session_authn_nonblock(
+        &self,
+        flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
+        Ok(NonblockResult::Success(self.session_authn(flow)?))
+    }
+
     fn session_authn(
         &self,
         flow: &mut Flow
@@ -275,6 +293,14 @@ where
 {
     type Error = SessionAuthNError<Flow::CredError, Infallible>;
     type Prin = Prin;
+
+    #[inline]
+    fn session_authn_nonblock(
+        &self,
+        flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
+        Ok(NonblockResult::Success(self.session_authn(flow)?))
+    }
 
     fn session_authn(
         &self,
