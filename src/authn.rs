@@ -35,6 +35,7 @@ use constellation_common::nonblock::NonblockResult;
 use log::trace;
 
 use crate::cred::Credentials;
+use crate::cred::NullCred;
 
 /// Receiver for authenticated messages.
 pub trait AuthNMsgRecv<Prin, Msg> {
@@ -60,7 +61,7 @@ pub trait AuthNMsgRecv<Prin, Msg> {
 /// principal.
 pub trait SessionAuthN<Flow: Credentials + Read + Write> {
     /// Type of session prinicpals.
-    type Prin: Clone + Eq + Hash;
+    type Prin: Clone + Display + Eq + Hash;
     /// Type of errors that can occur during authentication.
     type Error: Display + ScopedError;
 
@@ -94,9 +95,9 @@ pub trait SessionAuthN<Flow: Credentials + Read + Write> {
 /// This permits message authenticators to handle forwarded messages.
 pub trait MsgAuthN<Msg, Wrapper> {
     /// Type of session principals.
-    type SessionPrin: Clone + Eq + Hash;
+    type SessionPrin: Clone + Display + Eq + Hash;
     /// Type of principals assigned to messages.
-    type Prin: Clone;
+    type Prin: Display + Clone;
     /// Errors that can occur during message authentication.
     type Error: Display + ScopedError;
 
@@ -235,21 +236,21 @@ where
     Flow: Credentials + Read + Write,
 {
     type Error = Infallible;
-    type Prin = ();
+    type Prin = NullCred;
 
     #[inline]
     fn session_authn_nonblock(
         &self,
         _flow: &mut Flow
     ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
-        Ok(NonblockResult::Success(AuthNResult::Accept(())))
+        Ok(NonblockResult::Success(AuthNResult::Accept(NullCred)))
     }
 
     fn session_authn(
         &self,
         _flow: &mut Flow
     ) -> Result<AuthNResult<Self::Prin>, Self::Error> {
-        Ok(AuthNResult::Accept(()))
+        Ok(AuthNResult::Accept(NullCred))
     }
 }
 

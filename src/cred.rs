@@ -19,6 +19,7 @@
 //! Credential-harvesting functionality.
 use std::convert::Infallible;
 use std::fmt::Display;
+use std::fmt::Formatter;
 #[cfg(feature = "unix")]
 use std::io::Error;
 #[cfg(feature = "openssl")]
@@ -103,6 +104,10 @@ pub struct SSLCred<'a, S> {
     peer_cert: X509,
     peer_cert_chain: Option<&'a StackRef<X509>>
 }
+
+/// Null credential, used for testing.
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct NullCred;
 
 #[cfg(feature = "gssapi")]
 impl GSSAPICred {
@@ -288,5 +293,11 @@ impl CredentialsMut for UnixStream {
     #[inline]
     fn creds(&mut self) -> Result<Option<UCred>, Error> {
         <Self as Credentials>::creds(self)
+    }
+}
+
+impl Display for NullCred {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "null credential")
     }
 }
