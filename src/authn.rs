@@ -60,7 +60,7 @@ pub trait AuthNMsgRecv<Prin, Msg> {
 /// principal.
 pub trait SessionAuthN<Flow: Credentials + Read + Write> {
     /// Type of session prinicpals.
-    type Prin: Clone + Display + Eq + Hash;
+    type Prin: Clone + Eq + Hash;
     /// Type of errors that can occur during authentication.
     type Error: Display + ScopedError;
 
@@ -94,9 +94,9 @@ pub trait SessionAuthN<Flow: Credentials + Read + Write> {
 /// This permits message authenticators to handle forwarded messages.
 pub trait MsgAuthN<Msg, Wrapper> {
     /// Type of session principals.
-    type SessionPrin: Clone + Display + Eq + Hash;
+    type SessionPrin: Clone + Eq + Hash;
     /// Type of principals assigned to messages.
-    type Prin: Clone + Display;
+    type Prin: Clone;
     /// Errors that can occur during message authentication.
     type Error: Display + ScopedError;
 
@@ -137,6 +137,9 @@ pub enum AuthNResult<Accept> {
     /// Authentication failed.
     Reject
 }
+
+
+pub struct PassthruSessionAuthN;
 
 /// Simple message authenticator that associates the session principal
 /// with each message.
@@ -224,6 +227,29 @@ where
         TestAuthN {
             prins: parties.collect()
         }
+    }
+}
+
+impl<Flow> SessionAuthN<Flow> for PassthruSessionAuthN
+where
+    Flow: Credentials + Read + Write,
+{
+    type Error = Infallible;
+    type Prin = ();
+
+    #[inline]
+    fn session_authn_nonblock(
+        &self,
+        _flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
+        Ok(NonblockResult::Success(AuthNResult::Accept(())))
+    }
+
+    fn session_authn(
+        &self,
+        _flow: &mut Flow
+    ) -> Result<AuthNResult<Self::Prin>, Self::Error> {
+        Ok(AuthNResult::Accept(()))
     }
 }
 
