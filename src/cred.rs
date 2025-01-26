@@ -297,7 +297,10 @@ impl CredentialsMut for UnixStream {
 }
 
 impl Display for NullCred {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), std::fmt::Error> {
         write!(f, "null credential")
     }
 }

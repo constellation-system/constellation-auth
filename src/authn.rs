@@ -139,7 +139,6 @@ pub enum AuthNResult<Accept> {
     Reject
 }
 
-
 #[derive(Clone, Default)]
 pub struct PassthruSessionAuthN;
 
@@ -234,7 +233,7 @@ where
 
 impl<Flow> SessionAuthN<Flow> for PassthruSessionAuthN
 where
-    Flow: Credentials + Read + Write,
+    Flow: Credentials + Read + Write
 {
     type Error = Infallible;
     type Prin = NullCred;
