@@ -35,6 +35,7 @@ use constellation_common::nonblock::NonblockResult;
 use log::trace;
 
 use crate::cred::Credentials;
+use crate::cred::NullCred;
 
 /// Receiver for authenticated messages.
 pub trait AuthNMsgRecv<Prin, Msg> {
@@ -96,7 +97,7 @@ pub trait MsgAuthN<Msg, Wrapper> {
     /// Type of session principals.
     type SessionPrin: Clone + Display + Eq + Hash;
     /// Type of principals assigned to messages.
-    type Prin: Clone + Display;
+    type Prin: Display + Clone;
     /// Errors that can occur during message authentication.
     type Error: Display + ScopedError;
 
@@ -137,6 +138,9 @@ pub enum AuthNResult<Accept> {
     /// Authentication failed.
     Reject
 }
+
+#[derive(Clone, Default)]
+pub struct PassthruSessionAuthN;
 
 /// Simple message authenticator that associates the session principal
 /// with each message.
@@ -224,6 +228,29 @@ where
         TestAuthN {
             prins: parties.collect()
         }
+    }
+}
+
+impl<Flow> SessionAuthN<Flow> for PassthruSessionAuthN
+where
+    Flow: Credentials + Read + Write
+{
+    type Error = Infallible;
+    type Prin = NullCred;
+
+    #[inline]
+    fn session_authn_nonblock(
+        &self,
+        _flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
+        Ok(NonblockResult::Success(AuthNResult::Accept(NullCred)))
+    }
+
+    fn session_authn(
+        &self,
+        _flow: &mut Flow
+    ) -> Result<AuthNResult<Self::Prin>, Self::Error> {
+        Ok(AuthNResult::Accept(NullCred))
     }
 }
 
