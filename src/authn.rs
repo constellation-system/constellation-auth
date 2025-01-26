@@ -140,6 +140,7 @@ pub enum AuthNResult<Accept> {
 }
 
 
+#[derive(Clone, Default)]
 pub struct PassthruSessionAuthN;
 
 /// Simple message authenticator that associates the session principal
