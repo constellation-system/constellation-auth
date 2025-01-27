@@ -31,9 +31,24 @@ use std::sync::Arc;
 
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
+use constellation_common::nonblock::NonblockResult;
 use log::trace;
 
 use crate::cred::Credentials;
+use crate::cred::NullCred;
+
+/// Receiver for authenticated messages.
+pub trait AuthNMsgRecv<Prin, Msg> {
+    /// Errors that can occur reporting messages.
+    type RecvError: Display + ScopedError;
+
+    /// Receive an authenticated message.
+    fn recv_auth_msg(
+        &mut self,
+        prin: &Prin,
+        msg: Msg
+    ) -> Result<(), Self::RecvError>;
+}
 
 /// Trait for session authenticators.
 ///
@@ -49,6 +64,15 @@ pub trait SessionAuthN<Flow: Credentials + Read + Write> {
     type Prin: Clone + Display + Eq + Hash;
     /// Type of errors that can occur during authentication.
     type Error: Display + ScopedError;
+
+    /// Attempt to perform session authentication without blocking.
+    ///
+    /// This will return an [AuthNResult] containing a
+    /// [Prin](SessionAuthN::Prin) in the case of success.
+    fn session_authn_nonblock(
+        &self,
+        flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error>;
 
     /// Perform session authentication.
     ///
@@ -73,7 +97,7 @@ pub trait MsgAuthN<Msg, Wrapper> {
     /// Type of session principals.
     type SessionPrin: Clone + Display + Eq + Hash;
     /// Type of principals assigned to messages.
-    type Prin: Clone + Display;
+    type Prin: Display + Clone;
     /// Errors that can occur during message authentication.
     type Error: Display + ScopedError;
 
@@ -114,6 +138,9 @@ pub enum AuthNResult<Accept> {
     /// Authentication failed.
     Reject
 }
+
+#[derive(Clone, Default)]
+pub struct PassthruSessionAuthN;
 
 /// Simple message authenticator that associates the session principal
 /// with each message.
@@ -204,6 +231,29 @@ where
     }
 }
 
+impl<Flow> SessionAuthN<Flow> for PassthruSessionAuthN
+where
+    Flow: Credentials + Read + Write
+{
+    type Error = Infallible;
+    type Prin = NullCred;
+
+    #[inline]
+    fn session_authn_nonblock(
+        &self,
+        _flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
+        Ok(NonblockResult::Success(AuthNResult::Accept(NullCred)))
+    }
+
+    fn session_authn(
+        &self,
+        _flow: &mut Flow
+    ) -> Result<AuthNResult<Self::Prin>, Self::Error> {
+        Ok(AuthNResult::Accept(NullCred))
+    }
+}
+
 impl<Prin, Cred, Flow> SessionAuthN<Flow> for TestAuthN<Prin, Cred>
 where
     Cred: Clone + Display + Eq + Hash,
@@ -214,6 +264,14 @@ where
 {
     type Error = SessionAuthNError<Flow::CredError, Infallible>;
     type Prin = Prin;
+
+    #[inline]
+    fn session_authn_nonblock(
+        &self,
+        flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
+        Ok(NonblockResult::Success(self.session_authn(flow)?))
+    }
 
     fn session_authn(
         &self,
@@ -262,6 +320,14 @@ where
 {
     type Error = SessionAuthNError<Flow::CredError, Infallible>;
     type Prin = Prin;
+
+    #[inline]
+    fn session_authn_nonblock(
+        &self,
+        flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
+        Ok(NonblockResult::Success(self.session_authn(flow)?))
+    }
 
     fn session_authn(
         &self,
