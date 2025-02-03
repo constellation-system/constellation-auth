@@ -236,8 +236,10 @@ impl<S> Credentials for SslStream<S>
 where
     S: Credentials + Read + Write
 {
-    type Cred<'a> = SSLCred<'a, S::Cred<'a>>
-    where Self: 'a;
+    type Cred<'a>
+        = SSLCred<'a, S::Cred<'a>>
+    where
+        Self: 'a;
     type CredError = S::CredError;
 
     #[inline]
@@ -264,8 +266,10 @@ impl<S> CredentialsMut for SslStream<S>
 where
     S: Credentials + Read + Write
 {
-    type Cred<'a> = SSLCred<'a, S::Cred<'a>>
-    where Self: 'a;
+    type Cred<'a>
+        = SSLCred<'a, S::Cred<'a>>
+    where
+        Self: 'a;
     type CredError = S::CredError;
 
     #[inline]
