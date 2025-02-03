@@ -1,4 +1,4 @@
-// Copyright © 2024 The Johns Hopkins Applied Physics Laboratory LLC.
+// Copyright © 2024-25 The Johns Hopkins Applied Physics Laboratory LLC.
 //
 // This program is free software: you can redistribute it and/or
 // modify it under the terms of the GNU Affero General Public License,
@@ -236,8 +236,10 @@ impl<S> Credentials for SslStream<S>
 where
     S: Credentials + Read + Write
 {
-    type Cred<'a> = SSLCred<'a, S::Cred<'a>>
-    where Self: 'a;
+    type Cred<'a>
+        = SSLCred<'a, S::Cred<'a>>
+    where
+        Self: 'a;
     type CredError = S::CredError;
 
     #[inline]
@@ -264,8 +266,10 @@ impl<S> CredentialsMut for SslStream<S>
 where
     S: Credentials + Read + Write
 {
-    type Cred<'a> = SSLCred<'a, S::Cred<'a>>
-    where Self: 'a;
+    type Cred<'a>
+        = SSLCred<'a, S::Cred<'a>>
+    where
+        Self: 'a;
     type CredError = S::CredError;
 
     #[inline]
