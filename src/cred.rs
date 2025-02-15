@@ -47,21 +47,17 @@ use libgssapi::oid::Oid;
 #[cfg(feature = "openssl")]
 use openssl::ssl::SslStream;
 #[cfg(feature = "openssl")]
-use openssl::stack::StackRef;
-#[cfg(feature = "openssl")]
 use openssl::x509::X509;
 
 /// Trait for types having auntentication credentials.
 pub trait Credentials {
     /// Type of credentials.
-    type Cred<'a>
-    where
-        Self: 'a;
+    type Cred;
     /// Type of error that can occur obtaining credentials.
     type CredError: Display;
 
     /// Get credentials for this object.
-    fn creds(&self) -> Result<Option<Self::Cred<'_>>, Self::CredError>;
+    fn creds(&self) -> Result<Option<Self::Cred>, Self::CredError>;
 }
 
 /// Trait for types having auntentication credentials, requiring a
@@ -70,14 +66,12 @@ pub trait Credentials {
 /// This largely exists for GSSAPI functions.
 pub trait CredentialsMut {
     /// Type of credentials.
-    type Cred<'a>
-    where
-        Self: 'a;
+    type Cred;
     /// Type of error that can occur obtaining credentials.
     type CredError: Display;
 
     /// Get credentials for this object.
-    fn creds(&mut self) -> Result<Option<Self::Cred<'_>>, Self::CredError>;
+    fn creds(&mut self) -> Result<Option<Self::Cred>, Self::CredError>;
 }
 
 #[cfg(feature = "gssapi")]
@@ -97,12 +91,12 @@ pub struct GSSAPICred {
 
 #[cfg(feature = "openssl")]
 /// Credentials from a TLS session.
-pub struct SSLCred<'a, S> {
+pub struct SSLCred<S> {
     /// Credentials from inner stream.
     inner: Option<S>,
-    session_id: &'a [u8],
+    session_id: Vec<u8>,
     peer_cert: X509,
-    peer_cert_chain: Option<&'a StackRef<X509>>
+    peer_cert_chain: Option<Vec<X509>>
 }
 
 /// Null credential, used for testing.
@@ -143,7 +137,7 @@ impl GSSAPICred {
 }
 
 #[cfg(feature = "openssl")]
-impl<S> SSLCred<'_, S> {
+impl<S> SSLCred<S> {
     /// Get the credentials for the underlying channel.
     #[inline]
     pub fn inner(&self) -> Option<&S> {
@@ -153,7 +147,7 @@ impl<S> SSLCred<'_, S> {
     /// Get the SSL session ID.
     #[inline]
     pub fn session_id(&self) -> &[u8] {
-        self.session_id
+        &self.session_id
     }
 
     /// Get the counterparty's certificate.
@@ -164,13 +158,13 @@ impl<S> SSLCred<'_, S> {
 
     /// Get the counterparty's certificate chain.
     #[inline]
-    pub fn peer_cert_chain(&self) -> Option<&StackRef<X509>> {
-        self.peer_cert_chain
+    pub fn peer_cert_chain(&self) -> Option<&[X509]> {
+        self.peer_cert_chain.as_deref()
     }
 }
 
 impl Credentials for TcpStream {
-    type Cred<'a> = Infallible;
+    type Cred = Infallible;
     type CredError = Infallible;
 
     #[inline]
@@ -180,7 +174,7 @@ impl Credentials for TcpStream {
 }
 
 impl CredentialsMut for TcpStream {
-    type Cred<'a> = Infallible;
+    type Cred = Infallible;
     type CredError = Infallible;
 
     #[inline]
@@ -191,7 +185,7 @@ impl CredentialsMut for TcpStream {
 
 #[cfg(feature = "gssapi")]
 impl CredentialsMut for ClientCtx {
-    type Cred<'a> = GSSAPICred;
+    type Cred = GSSAPICred;
     type CredError = libgssapi::error::Error;
 
     #[inline]
@@ -212,7 +206,7 @@ impl CredentialsMut for ClientCtx {
 
 #[cfg(feature = "gssapi")]
 impl CredentialsMut for ServerCtx {
-    type Cred<'a> = GSSAPICred;
+    type Cred = GSSAPICred;
     type CredError = libgssapi::error::Error;
 
     #[inline]
@@ -236,14 +230,11 @@ impl<S> Credentials for SslStream<S>
 where
     S: Credentials + Read + Write
 {
-    type Cred<'a>
-        = SSLCred<'a, S::Cred<'a>>
-    where
-        Self: 'a;
+    type Cred = SSLCred<S::Cred>;
     type CredError = S::CredError;
 
     #[inline]
-    fn creds(&self) -> Result<Option<Self::Cred<'_>>, S::CredError> {
+    fn creds(&self) -> Result<Option<Self::Cred>, S::CredError> {
         let inner = self.get_ref().creds()?;
         let ssl = self.ssl();
 
@@ -252,12 +243,18 @@ where
             .and_then(|peer_cert| {
                 ssl.session().map(|session| (peer_cert, session.id()))
             })
-            .map(|(peer_cert, session_id)| SSLCred {
-                inner: inner,
-                session_id: session_id,
-                peer_cert: peer_cert,
-                peer_cert_chain: ssl.verified_chain()
-            }))
+           .map(|(peer_cert, session_id)| {
+               let chain = ssl.verified_chain()
+                   .map(|stack| stack.into_iter()
+                        .map(|cert| cert.to_owned()).collect());
+
+               SSLCred {
+                   inner: inner,
+                   session_id: session_id.to_vec(),
+                   peer_cert: peer_cert,
+                   peer_cert_chain: chain
+               }
+           }))
     }
 }
 
@@ -266,21 +263,18 @@ impl<S> CredentialsMut for SslStream<S>
 where
     S: Credentials + Read + Write
 {
-    type Cred<'a>
-        = SSLCred<'a, S::Cred<'a>>
-    where
-        Self: 'a;
+    type Cred = SSLCred<S::Cred>;
     type CredError = S::CredError;
 
     #[inline]
-    fn creds(&mut self) -> Result<Option<Self::Cred<'_>>, S::CredError> {
+    fn creds(&mut self) -> Result<Option<Self::Cred>, S::CredError> {
         <Self as Credentials>::creds(self)
     }
 }
 
 #[cfg(feature = "unix")]
 impl Credentials for UnixStream {
-    type Cred<'a> = UCred;
+    type Cred = UCred;
     type CredError = Error;
 
     #[inline]
@@ -291,7 +285,7 @@ impl Credentials for UnixStream {
 
 #[cfg(feature = "unix")]
 impl CredentialsMut for UnixStream {
-    type Cred<'a> = UCred;
+    type Cred = UCred;
     type CredError = Error;
 
     #[inline]

@@ -257,7 +257,7 @@ where
 impl<Prin, Cred, Flow> SessionAuthN<Flow> for TestAuthN<Prin, Cred>
 where
     Cred: Clone + Display + Eq + Hash,
-    for<'a> Flow::Cred<'a>: TryInto<Cred>,
+    Flow::Cred: TryInto<Cred>,
     Flow: Credentials + Read + Write,
     Flow::CredError: ScopedError,
     Prin: Clone + Display + Eq + Hash
@@ -313,7 +313,7 @@ where
 impl<Prin, Cred, Flow> SessionAuthN<Flow> for Arc<TestAuthN<Prin, Cred>>
 where
     Cred: Clone + Display + Eq + Hash,
-    for<'a> Flow::Cred<'a>: TryInto<Cred>,
+    Flow::Cred: TryInto<Cred>,
     Flow: Credentials + Read + Write,
     Flow::CredError: ScopedError,
     Prin: Clone + Display + Eq + Hash
