@@ -243,18 +243,18 @@ where
             .and_then(|peer_cert| {
                 ssl.session().map(|session| (peer_cert, session.id()))
             })
-           .map(|(peer_cert, session_id)| {
-               let chain = ssl.verified_chain()
-                   .map(|stack| stack.into_iter()
-                        .map(|cert| cert.to_owned()).collect());
+            .map(|(peer_cert, session_id)| {
+                let chain = ssl.verified_chain().map(|stack| {
+                    stack.into_iter().map(|cert| cert.to_owned()).collect()
+                });
 
-               SSLCred {
-                   inner: inner,
-                   session_id: session_id.to_vec(),
-                   peer_cert: peer_cert,
-                   peer_cert_chain: chain
-               }
-           }))
+                SSLCred {
+                    inner: inner,
+                    session_id: session_id.to_vec(),
+                    peer_cert: peer_cert,
+                    peer_cert_chain: chain
+                }
+            }))
     }
 }
 
