@@ -154,6 +154,21 @@ pub struct TestAuthN<Prin, Cred: Clone + Eq + Hash> {
     prins: HashMap<Cred, Prin>
 }
 
+#[derive(Clone)]
+pub struct TrivialAuthN<Cred: Clone + Eq + Hash> {
+    cred: PhantomData<Cred>
+}
+
+impl<Cred> Default for TrivialAuthN<Cred>
+where
+    Cred: Clone + Eq + Hash
+{
+    #[inline]
+    fn default() -> Self {
+        TrivialAuthN { cred: PhantomData }
+    }
+}
+
 impl<Cred, AuthN> ScopedError for SessionAuthNError<Cred, AuthN>
 where
     Cred: ScopedError,
@@ -251,6 +266,58 @@ where
         _flow: &mut Flow
     ) -> Result<AuthNResult<Self::Prin>, Self::Error> {
         Ok(AuthNResult::Accept(NullCred))
+    }
+}
+
+impl<Flow, Cred> SessionAuthN<Flow> for TrivialAuthN<Cred>
+where
+    Cred: Clone + Display + Eq + Hash,
+    Flow::Cred: TryInto<Cred>,
+    Flow: Credentials + Read + Write,
+    Flow::CredError: ScopedError
+{
+    type Error = SessionAuthNError<Flow::CredError, Infallible>;
+    type Prin = Cred;
+
+    #[inline]
+    fn session_authn_nonblock(
+        &self,
+        flow: &mut Flow
+    ) -> Result<NonblockResult<AuthNResult<Self::Prin>, ()>, Self::Error> {
+        Ok(NonblockResult::Success(self.session_authn(flow)?))
+    }
+
+    fn session_authn(
+        &self,
+        flow: &mut Flow
+    ) -> Result<AuthNResult<Self::Prin>, Self::Error> {
+        let cred = flow
+            .creds()
+            .map_err(|err| SessionAuthNError::Cred { err: err })?;
+
+        match cred {
+            Some(cred) => match cred.try_into() {
+                Ok(cred) => {
+                    trace!(target: "test-authn",
+                           "harvested credentials from session: {}",
+                           cred);
+
+                    Ok(AuthNResult::Accept(cred))
+                }
+                Err(_) => {
+                    trace!(target: "test-authn",
+                           "failed to convert harvested credentials");
+
+                    Ok(AuthNResult::Reject)
+                }
+            },
+            None => {
+                trace!(target: "test-authn",
+                       "no harvested credentials from session");
+
+                Ok(AuthNResult::Reject)
+            }
+        }
     }
 }
 
