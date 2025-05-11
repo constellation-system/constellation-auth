@@ -16,10 +16,33 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
-//! Constellation Authentication / Authorization API
-#![feature(peer_credentials_unix_socket)]
-#![allow(clippy::redundant_field_names)]
+use std::net::SocketAddr;
+use std::path::PathBuf;
 
-pub mod authn;
-pub mod config;
-pub mod cred;
+use serde::Deserialize;
+use serde::Serialize;
+
+
+#[derive(
+    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename = "class-id")]
+#[serde(untagged)]
+pub enum TestCredConfig {
+    Unix {
+        unix: PathBuf
+    },
+    IP {
+        ip: SocketAddr
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename = "test-authn-config")]
+#[serde(rename_all = "kebab-case")]
+pub struct TestAuthNPrinConfig<Prin, Cred> {
+    principal: Prin,
+    creds: Vec<Cred>
+}
+
+pub type TestAuthNConfig<Prin, Cred> = Vec<TestAuthNPrinConfig<Prin, Cred>>;
