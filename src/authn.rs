@@ -34,6 +34,8 @@ use constellation_common::error::ScopedError;
 use constellation_common::nonblock::NonblockResult;
 use log::trace;
 
+use crate::config::TestAuthNConfig;
+use crate::config::TestAuthNPrinConfig;
 use crate::cred::Credentials;
 use crate::cred::NullCred;
 
@@ -234,6 +236,7 @@ where
 
 impl<Prin, Cred> TestAuthN<Prin, Cred>
 where
+    Prin: Clone + Eq + Hash,
     Cred: Clone + Eq + Hash
 {
     #[inline]

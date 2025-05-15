@@ -22,7 +22,6 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
-
 #[derive(
     Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
@@ -46,3 +45,31 @@ pub struct TestAuthNPrinConfig<Prin, Cred> {
 }
 
 pub type TestAuthNConfig<Prin, Cred> = Vec<TestAuthNPrinConfig<Prin, Cred>>;
+
+impl<Prin, Cred> TestAuthNPrinConfig<Prin, Cred> {
+    #[inline]
+    pub fn new(
+        principal: Prin,
+        creds: Vec<Cred>
+    ) -> Self {
+        TestAuthNPrinConfig {
+            principal: principal,
+            creds: creds
+        }
+    }
+
+    #[inline]
+    pub fn principal(&self) -> &Prin {
+        &self.principal
+    }
+
+    #[inline]
+    pub fn creds(&self) -> &[Cred] {
+        &self.creds
+    }
+
+    #[inline]
+    pub fn take(self) -> (Prin, Vec<Cred>) {
+        (self.principal, self.creds)
+    }
+}
