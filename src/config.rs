@@ -28,15 +28,13 @@ use serde::Serialize;
 #[serde(rename = "class-id")]
 #[serde(untagged)]
 pub enum TestCredConfig {
-    Unix {
-        unix: PathBuf
-    },
-    IP {
-        ip: SocketAddr
-    }
+    Unix { unix: PathBuf },
+    IP { ip: SocketAddr }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(
+    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
 #[serde(rename = "test-authn-config")]
 #[serde(rename_all = "kebab-case")]
 pub struct TestAuthNPrinConfig<Prin, Cred> {
