@@ -34,6 +34,7 @@ use constellation_common::error::ScopedError;
 use constellation_common::nonblock::NonblockResult;
 use log::trace;
 
+use crate::config::TestAuthNConfig;
 use crate::cred::Credentials;
 use crate::cred::NullCred;
 
@@ -159,6 +160,12 @@ pub struct TrivialAuthN<Cred: Clone + Eq + Hash> {
     cred: PhantomData<Cred>
 }
 
+#[derive(Debug)]
+pub enum TestAuthNCreateError<Convert, Cred> {
+    Convert { err: Convert },
+    Duplicate { cred: Cred }
+}
+
 impl<Cred> Default for TrivialAuthN<Cred>
 where
     Cred: Clone + Eq + Hash
@@ -234,15 +241,40 @@ where
 
 impl<Prin, Cred> TestAuthN<Prin, Cred>
 where
+    Prin: Clone + Eq + Hash,
     Cred: Clone + Eq + Hash
 {
     #[inline]
-    pub fn create<I>(parties: I) -> Self
+    pub fn from_parties<I>(parties: I) -> Self
     where
         I: Iterator<Item = (Cred, Prin)> {
         TestAuthN {
             prins: parties.collect()
         }
+    }
+
+    pub fn create<CredConfig>(
+        config: TestAuthNConfig<Prin, CredConfig>
+    ) -> Result<Self, TestAuthNCreateError<CredConfig::Error, Cred>>
+    where
+        CredConfig: TryInto<Cred> {
+        let mut prins = HashMap::new();
+
+        for prin in config.into_iter() {
+            let (prin, creds) = prin.take();
+
+            for cred in creds.into_iter() {
+                let cred = cred.try_into().map_err(|err| {
+                    TestAuthNCreateError::Convert { err: err }
+                })?;
+
+                if prins.insert(cred.clone(), prin.clone()).is_some() {
+                    return Err(TestAuthNCreateError::Duplicate { cred: cred });
+                }
+            }
+        }
+
+        Ok(TestAuthN { prins: prins })
     }
 }
 
@@ -421,6 +453,24 @@ where
         match self {
             SessionAuthNError::Cred { err } => err.fmt(f),
             SessionAuthNError::AuthN { err } => err.fmt(f)
+        }
+    }
+}
+
+impl<Prin, Cred> Display for TestAuthNCreateError<Prin, Cred>
+where
+    Prin: Display,
+    Cred: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            TestAuthNCreateError::Convert { err } => err.fmt(f),
+            TestAuthNCreateError::Duplicate { cred } => {
+                write!(f, "duplicate credential {}", cred)
+            }
         }
     }
 }
