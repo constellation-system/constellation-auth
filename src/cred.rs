@@ -98,17 +98,41 @@ pub struct SSLCred<S> {
     inner: Option<S>,
     session_id: Vec<u8>,
     peer_cert: X509,
-    peer_cert_chain: Option<Vec<X509>>
+    peer_cert_chain: Option<Vec<X509>>,
+    /// Security level of the TLS session.
+    seclvl: u32
 }
 
 /// Null credential, used for testing.
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NullCred;
 
+#[cfg(feature = "unix")]
 pub struct UnixSocketCred<U> {
     local: SocketAddr,
     peer: SocketAddr,
     user: U
+}
+
+#[cfg(feature = "unix")]
+impl<U> UnixSocketCred<U> {
+    /// Get the local socket address.
+    #[inline]
+    pub fn local(&self) -> &SocketAddr {
+        &self.local
+    }
+
+    /// Get the peer socket address.
+    #[inline]
+    pub fn peer(&self) -> &SocketAddr {
+        &self.peer
+    }
+
+    /// Get the user information.
+    #[inline]
+    pub fn user(&self) -> &U {
+        &self.user
+    }
 }
 
 #[cfg(feature = "gssapi")]
@@ -168,6 +192,12 @@ impl<S> SSLCred<S> {
     #[inline]
     pub fn peer_cert_chain(&self) -> Option<&[X509]> {
         self.peer_cert_chain.as_deref()
+    }
+
+    /// Get the security level of the TLS session.
+    #[inline]
+    pub fn seclvl(&self) -> u32 {
+        self.seclvl
     }
 }
 
@@ -245,6 +275,7 @@ where
     fn creds(&self) -> Result<Option<Self::Cred>, S::CredError> {
         let inner = self.get_ref().creds()?;
         let ssl = self.ssl();
+        let seclvl = ssl.security_level();
 
         Ok(ssl
             .peer_certificate()
@@ -260,7 +291,8 @@ where
                     inner: inner,
                     session_id: session_id.to_vec(),
                     peer_cert: peer_cert,
-                    peer_cert_chain: chain
+                    peer_cert_chain: chain,
+                    seclvl: seclvl
                 }
             }))
     }
