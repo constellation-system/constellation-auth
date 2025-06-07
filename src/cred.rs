@@ -28,6 +28,8 @@ use std::io::Read;
 use std::io::Write;
 use std::net::TcpStream;
 #[cfg(feature = "unix")]
+use std::os::unix::net::SocketAddr;
+#[cfg(feature = "unix")]
 use std::os::unix::net::UCred;
 #[cfg(feature = "unix")]
 use std::os::unix::net::UnixStream;
@@ -102,6 +104,12 @@ pub struct SSLCred<S> {
 /// Null credential, used for testing.
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NullCred;
+
+pub struct UnixSocketCred<U> {
+    local: SocketAddr,
+    peer: SocketAddr,
+    user: U
+}
 
 #[cfg(feature = "gssapi")]
 impl GSSAPICred {
@@ -274,22 +282,59 @@ where
 
 #[cfg(feature = "unix")]
 impl Credentials for UnixStream {
-    type Cred = UCred;
+    type Cred = UnixSocketCred<UCred>;
     type CredError = Error;
 
     #[inline]
-    fn creds(&self) -> Result<Option<UCred>, Error> {
-        self.peer_cred().map(Some)
+    fn creds(&self) -> Result<Option<Self::Cred>, Error> {
+        let local = self.local_addr()?;
+        let peer = self.peer_addr()?;
+        let user = self.peer_cred()?;
+
+        Ok(Some(UnixSocketCred {
+            local: local,
+            peer: peer,
+            user: user
+        }))
     }
 }
 
 #[cfg(feature = "unix")]
 impl CredentialsMut for UnixStream {
-    type Cred = UCred;
+    type Cred = UnixSocketCred<UCred>;
     type CredError = Error;
 
     #[inline]
-    fn creds(&mut self) -> Result<Option<UCred>, Error> {
+    fn creds(&mut self) -> Result<Option<Self::Cred>, Error> {
+        <Self as Credentials>::creds(self)
+    }
+}
+
+#[cfg(feature = "unix")]
+impl Credentials for mio::net::UnixStream {
+    type Cred = UnixSocketCred<()>;
+    type CredError = Error;
+
+    #[inline]
+    fn creds(&self) -> Result<Option<Self::Cred>, Error> {
+        let local = self.local_addr()?;
+        let peer = self.peer_addr()?;
+
+        Ok(Some(UnixSocketCred {
+            local: local,
+            peer: peer,
+            user: ()
+        }))
+    }
+}
+
+#[cfg(feature = "unix")]
+impl CredentialsMut for mio::net::UnixStream {
+    type Cred = UnixSocketCred<()>;
+    type CredError = Error;
+
+    #[inline]
+    fn creds(&mut self) -> Result<Option<Self::Cred>, Error> {
         <Self as Credentials>::creds(self)
     }
 }

@@ -42,7 +42,36 @@ pub struct TestAuthNPrinConfig<Prin, Cred> {
     creds: Vec<Cred>
 }
 
+#[derive(
+    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename = "host-authn-unsafe-config")]
+#[serde(rename_all = "kebab-case")]
+pub struct HostAuthNUnsafeConfig {
+    allow_unsafe_ip_creds: bool
+}
+
+#[derive(
+    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename = "host-authn-unsafe-config")]
+#[serde(rename_all = "kebab-case")]
+pub struct HostAuthNConfig {
+    #[serde(default)]
+    #[serde(rename = "unsafe")]
+    unsafe_opts: HostAuthNUnsafeConfig
+}
+
 pub type TestAuthNConfig<Prin, Cred> = Vec<TestAuthNPrinConfig<Prin, Cred>>;
+
+impl Default for HostAuthNUnsafeConfig {
+    #[inline]
+    fn default() -> Self {
+        HostAuthNUnsafeConfig {
+            allow_unsafe_ip_creds: false
+        }
+    }
+}
 
 impl<Prin, Cred> TestAuthNPrinConfig<Prin, Cred> {
     #[inline]

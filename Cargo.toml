@@ -37,11 +37,12 @@ gssapi = ["dep:libgssapi", "constellation-common/gssapi"]
 log = ["dep:log", "constellation-common/log"]
 openssl = ["dep:openssl", "constellation-common/openssl"]
 openssl-vendored = ["constellation-common/openssl-vendored"]
-unix = ["constellation-common/unix"]
+unix = ["constellation-common/unix", "mio/os-ext"]
 
 [dependencies]
 constellation-common = { git = "https://github.com/constellation-system/constellation-common.git", branch = "project/ioc", default-features = false }
 libgssapi = { version = "0.8", optional = true }
 log = { version = "0.4", optional = true }
+mio = { version = "1.0", features = ["net"]
 openssl = { version = "0.10", optional = true }
 serde = { version = "1.0", features = ["derive"] }

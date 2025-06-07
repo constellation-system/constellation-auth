@@ -19,6 +19,7 @@
 //! Constellation Authentication / Authorization API
 #![feature(peer_credentials_unix_socket)]
 #![allow(clippy::redundant_field_names)]
+#![allow(clippy::type_complexity)]
 
 pub mod authn;
 pub mod config;
