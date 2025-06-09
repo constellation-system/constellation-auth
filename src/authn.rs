@@ -30,6 +30,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use constellation_common::codec::Decoder;
+use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
 use constellation_common::nonblock::NonblockResult;
@@ -62,7 +63,7 @@ pub trait AuthNed<Prin, T> {
     fn get_mut(&mut self) -> &mut T;
 
     /// Deconstruct this into the payload and principal.
-    fn take(self) -> (T, Prin);
+    fn take(self) -> (Prin, T);
 }
 
 /// Receiver for authenticated messages.
@@ -152,6 +153,39 @@ pub trait MsgAuthN<Msg, Wrapper> {
     ) -> Result<AuthNResult<Self::AuthNMsg, ()>, Self::Error>;
 }
 
+/// Type trait for relationships between [Decoder]s and [MsgAuthN]s.
+///
+/// This is used to avoid complex type constraints on types that are
+/// decoded by an [Decoder], then subsequently authenticated (and
+/// possibly unwrapped) by a [MsgAuthN].
+///
+/// # Type Parameters
+///
+/// * `Msg`: Type of messages ultimately produced by this chain.
+pub trait MsgAuthNTypes<Msg> {
+    /// Type of wrapper messages.
+    type Wrapper;
+    type DecoderConfig: Default;
+    type AuthNError: Display;
+    type DecodeError: Display;
+    /// Type of principals assigned to messages.
+    type Prin: Display + Clone;
+    /// Type of session principals.
+    type SessionPrin: Clone + Display + Eq + Hash;
+    /// Type of [Decoder]s used to decode messages of type
+    /// [Wrapper](AuthNTypes::Wrapper).
+    type Decoder: Create<Config = Self::DecoderConfig>
+        + Decoder<Self::Wrapper, DecodeError = Self::DecodeError>;
+    /// Type of message authenticators.
+    type MsgAuthN: MsgAuthN<
+        Msg,
+        Self::Wrapper,
+        SessionPrin = Self::SessionPrin,
+        Prin = Self::Prin,
+        Error = Self::AuthNError
+    >;
+}
+
 /// Type trait for relationships between [Decoder]s, [SessionAuthN]s,
 /// and [MsgAuthN]s.
 ///
@@ -169,19 +203,13 @@ pub trait MsgAuthN<Msg, Wrapper> {
 pub trait AuthNTypes<Stream, Msg>
 where
     Stream: Credentials + Read + Write {
-    /// Type of wrapper messages.
-    type Wrapper;
-    /// Type of [Decoder]s used to decode messages of type
-    /// [Wrapper](AuthNTypes::Wrapper).
-    type Decoder: Decoder<Self::Wrapper>;
-    /// Type of session authenticators
-    type SessionAuthN: SessionAuthN<Stream>;
-    /// Type of message authenticators.
-    type MsgAuthN: MsgAuthN<
-        Msg,
-        Self::Wrapper,
-        SessionPrin = <Self::SessionAuthN as SessionAuthN<Stream>>::Prin
+    /// Type of session authenticators.
+    type SessionAuthN: SessionAuthN<
+        Stream,
+        Prin = <Self::MsgAuthNTypes as MsgAuthNTypes<Msg>>::SessionPrin
     >;
+    /// Message authenticator type trait.
+    type MsgAuthNTypes: MsgAuthNTypes<Msg>;
 }
 
 /// Common type for errors that can occur during session authentication.
@@ -260,8 +288,8 @@ impl<Prin, T> AuthNed<Prin, T> for BasicAuthNed<Prin, T> {
     }
 
     #[inline]
-    fn take(self) -> (T, Prin) {
-        (self.content, self.prin)
+    fn take(self) -> (Prin, T) {
+        (self.prin, self.content)
     }
 }
 
@@ -282,8 +310,8 @@ impl<T> AuthNed<NullCred, T> for NullAuthNed<T> {
     }
 
     #[inline]
-    fn take(self) -> (T, NullCred) {
-        (self.content, NullCred)
+    fn take(self) -> (NullCred, T) {
+        (NullCred, self.content)
     }
 }
 
