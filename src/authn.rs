@@ -67,15 +67,16 @@ pub trait AuthNed<Prin, T> {
 }
 
 /// Receiver for authenticated messages.
-pub trait AuthNMsgRecv<Prin, Msg> {
+pub trait AuthNMsgRecv<Prin, Msg, AuthNMsg>
+where
+    AuthNMsg: AuthNed<Prin, Msg> {
     /// Errors that can occur reporting messages.
     type RecvError: Display + ScopedError;
 
     /// Receive an authenticated message.
     fn recv_auth_msg(
         &mut self,
-        prin: &Prin,
-        msg: Msg
+        msg: AuthNMsg
     ) -> Result<(), Self::RecvError>;
 }
 
@@ -106,7 +107,7 @@ where
         &self,
         flow: Stream
     ) -> Result<
-        NonblockResult<AuthNResult<Self::AuthNSession, Stream>, Stream>,
+        NonblockResult<AuthNResult<Self::AuthNSession, ()>, Stream>,
         Self::Error
     >;
 
@@ -117,7 +118,7 @@ where
     fn session_authn(
         &self,
         flow: Stream
-    ) -> Result<AuthNResult<Self::AuthNSession, Stream>, Self::Error>;
+    ) -> Result<AuthNResult<Self::AuthNSession, ()>, Self::Error>;
 }
 
 /// Trait for message authenticators.
@@ -165,17 +166,17 @@ pub trait MsgAuthN<Msg, Wrapper> {
 pub trait MsgAuthNTypes<Msg> {
     /// Type of wrapper messages.
     type Wrapper;
-    type DecoderConfig: Default;
-    type AuthNError: Display;
-    type DecodeError: Display;
     /// Type of principals assigned to messages.
     type Prin: Display + Clone;
     /// Type of session principals.
     type SessionPrin: Clone + Display + Eq + Hash;
+    type DecoderConfig: Default;
+    type DecodeError: Display;
     /// Type of [Decoder]s used to decode messages of type
     /// [Wrapper](AuthNTypes::Wrapper).
     type Decoder: Create<Config = Self::DecoderConfig>
         + Decoder<Self::Wrapper, DecodeError = Self::DecodeError>;
+    type AuthNError: Display;
     /// Type of message authenticators.
     type MsgAuthN: MsgAuthN<
         Msg,
@@ -445,7 +446,7 @@ where
         &self,
         flow: Flow
     ) -> Result<
-        NonblockResult<AuthNResult<NullAuthNed<Flow>, Flow>, Flow>,
+        NonblockResult<AuthNResult<NullAuthNed<Flow>, ()>, Flow>,
         Self::Error
     > {
         Ok(NonblockResult::Success(AuthNResult::Accept(NullAuthNed {
@@ -457,7 +458,7 @@ where
     fn session_authn(
         &self,
         flow: Flow
-    ) -> Result<AuthNResult<NullAuthNed<Flow>, Flow>, Self::Error> {
+    ) -> Result<AuthNResult<NullAuthNed<Flow>, ()>, Self::Error> {
         Ok(AuthNResult::Accept(NullAuthNed { content: flow }))
     }
 }
@@ -478,7 +479,7 @@ where
         &self,
         flow: Flow
     ) -> Result<
-        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, Flow>, Flow>,
+        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Flow>,
         Self::Error
     > {
         Ok(NonblockResult::Success(self.session_authn(flow)?))
@@ -487,7 +488,7 @@ where
     fn session_authn(
         &self,
         flow: Flow
-    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, Flow>, Self::Error>
+    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Self::Error>
     {
         let cred = flow
             .creds()
@@ -509,14 +510,14 @@ where
                     trace!(target: "test-authn",
                            "failed to convert harvested credentials");
 
-                    Ok(AuthNResult::Reject(flow))
+                    Ok(AuthNResult::Reject(()))
                 }
             },
             None => {
                 trace!(target: "test-authn",
                        "no harvested credentials from session");
 
-                Ok(AuthNResult::Reject(flow))
+                Ok(AuthNResult::Reject(()))
             }
         }
     }
@@ -539,7 +540,7 @@ where
         &self,
         flow: Flow
     ) -> Result<
-        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, Flow>, Flow>,
+        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Flow>,
         Self::Error
     > {
         Ok(NonblockResult::Success(self.session_authn(flow)?))
@@ -548,7 +549,7 @@ where
     fn session_authn(
         &self,
         flow: Flow
-    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, Flow>, Self::Error>
+    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Self::Error>
     {
         let cred = flow
             .creds()
@@ -566,21 +567,21 @@ where
                             content: flow,
                             prin: prin.clone()
                         })),
-                        None => Ok(AuthNResult::Reject(flow))
+                        None => Ok(AuthNResult::Reject(()))
                     }
                 }
                 Err(_) => {
                     trace!(target: "test-authn",
                            "failed to convert harvested credentials");
 
-                    Ok(AuthNResult::Reject(flow))
+                    Ok(AuthNResult::Reject(()))
                 }
             },
             None => {
                 trace!(target: "test-authn",
                        "no harvested credentials from session");
 
-                Ok(AuthNResult::Reject(flow))
+                Ok(AuthNResult::Reject(()))
             }
         }
     }
@@ -603,7 +604,7 @@ where
         &self,
         flow: Flow
     ) -> Result<
-        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, Flow>, Flow>,
+        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Flow>,
         Self::Error
     > {
         Ok(NonblockResult::Success(self.session_authn(flow)?))
@@ -612,7 +613,7 @@ where
     fn session_authn(
         &self,
         flow: Flow
-    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, Flow>, Self::Error>
+    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Self::Error>
     {
         self.as_ref().session_authn(flow)
     }
