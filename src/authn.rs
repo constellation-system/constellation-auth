@@ -27,13 +27,13 @@ use std::hash::Hash;
 use std::io::Read;
 use std::io::Write;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use constellation_common::codec::Decoder;
 use constellation_common::config::Create;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
-use constellation_common::nonblock::NonblockResult;
+use constellation_common::net::Negotiation;
+use constellation_common::net::Negotiator;
 use log::trace;
 
 use crate::config::TestAuthNConfig;
@@ -89,36 +89,14 @@ where
 ///
 /// The result of successful authentication should be a session
 /// principal.
-pub trait SessionAuthN<Stream>
+pub trait SessionAuthN<Stream>:
+    Negotiator<Stream, Outcome = AuthNResult<Self::AuthNSession, ()>>
 where
     Stream: Credentials + Read + Write {
     /// Type of session prinicpals.
     type Prin: Clone + Display + Eq + Hash;
-    /// Type of errors that can occur during authentication.
-    type Error: Display + ScopedError;
     /// Type of authenticated flows produced by this authenticator.
     type AuthNSession: AuthNed<Self::Prin, Stream>;
-
-    /// Attempt to perform session authentication without blocking.
-    ///
-    /// This will return an [AuthNResult] containing a
-    /// [Prin](SessionAuthN::Prin) in the case of success.
-    fn session_authn_nonblock(
-        &self,
-        flow: Stream
-    ) -> Result<
-        NonblockResult<AuthNResult<Self::AuthNSession, ()>, Stream>,
-        Self::Error
-    >;
-
-    /// Perform session authentication.
-    ///
-    /// This will return an [AuthNResult] containing a
-    /// [Prin](SessionAuthN::Prin) in the case of success.
-    fn session_authn(
-        &self,
-        flow: Stream
-    ) -> Result<AuthNResult<Self::AuthNSession, ()>, Self::Error>;
 }
 
 /// Trait for message authenticators.
@@ -240,6 +218,10 @@ pub enum AuthNResult<Accept, Reject> {
 #[derive(Clone, Default)]
 pub struct PassthruSessionAuthN;
 
+pub struct PassthruSessionNegotiation<Stream> {
+    stream: Stream
+}
+
 /// Simple message authenticator that associates the session principal
 /// with each message.
 pub struct PassthruMsgAuthN<Msg, Prin: Clone + Display> {
@@ -247,14 +229,28 @@ pub struct PassthruMsgAuthN<Msg, Prin: Clone + Display> {
     msg: PhantomData<Msg>
 }
 
-/// An authenticator that consists solely of a static lookup table.
-pub struct TestAuthN<Prin, Cred: Clone + Eq + Hash> {
-    prins: HashMap<Cred, Prin>
+pub struct TrivialSessionNegotiation<Stream> {
+    stream: Stream
 }
 
 #[derive(Clone)]
 pub struct TrivialAuthN<Cred: Clone + Eq + Hash> {
     cred: PhantomData<Cred>
+}
+
+pub struct TestAuthNSessionNegotiation<'a, Stream, Prin, Cred>
+where
+    Cred: Clone + Eq + Hash,
+    Stream::Cred: TryInto<Cred>,
+    Stream: Credentials + Read + Write,
+    Stream::CredError: ScopedError {
+    stream: Stream,
+    info: &'a TestAuthN<Prin, Cred>
+}
+
+/// An authenticator that consists solely of a static lookup table.
+pub struct TestAuthN<Prin, Cred: Clone + Eq + Hash> {
+    prins: HashMap<Cred, Prin>
 }
 
 pub struct NullAuthNed<T> {
@@ -433,64 +429,68 @@ where
     }
 }
 
+impl<Stream> Negotiation<'_, AuthNResult<NullAuthNed<Stream>, ()>>
+    for PassthruSessionNegotiation<Stream>
+where
+    Stream: Credentials + Read + Write
+{
+    type NegotiateError = Infallible;
+
+    /// Perform negotiations.
+    #[inline]
+    fn negotiate(
+        self
+    ) -> Result<AuthNResult<NullAuthNed<Stream>, ()>, Self::NegotiateError>
+    {
+        Ok(AuthNResult::Accept(NullAuthNed {
+            content: self.stream
+        }))
+    }
+}
+
+impl<Stream> Negotiator<Stream> for PassthruSessionAuthN
+where
+    Stream: Credentials + Read + Write
+{
+    type Outcome = AuthNResult<NullAuthNed<Stream>, ()>;
+    type StartError = Infallible;
+    type State<'a> = PassthruSessionNegotiation<Stream>;
+
+    #[inline]
+    fn start(
+        &self,
+        stream: Stream
+    ) -> Result<PassthruSessionNegotiation<Stream>, Self::StartError> {
+        Ok(PassthruSessionNegotiation { stream: stream })
+    }
+}
+
 impl<Flow> SessionAuthN<Flow> for PassthruSessionAuthN
 where
     Flow: Credentials + Read + Write
 {
     type AuthNSession = NullAuthNed<Flow>;
-    type Error = Infallible;
     type Prin = NullCred;
-
-    #[inline]
-    fn session_authn_nonblock(
-        &self,
-        flow: Flow
-    ) -> Result<
-        NonblockResult<AuthNResult<NullAuthNed<Flow>, ()>, Flow>,
-        Self::Error
-    > {
-        Ok(NonblockResult::Success(AuthNResult::Accept(NullAuthNed {
-            content: flow
-        })))
-    }
-
-    #[inline]
-    fn session_authn(
-        &self,
-        flow: Flow
-    ) -> Result<AuthNResult<NullAuthNed<Flow>, ()>, Self::Error> {
-        Ok(AuthNResult::Accept(NullAuthNed { content: flow }))
-    }
 }
 
-impl<Flow, Cred> SessionAuthN<Flow> for TrivialAuthN<Cred>
+impl<Stream, Prin> Negotiation<'_, AuthNResult<BasicAuthNed<Prin, Stream>, ()>>
+    for TrivialSessionNegotiation<Stream>
 where
-    Cred: Clone + Display + Eq + Hash,
-    Flow::Cred: TryInto<Cred>,
-    Flow: Credentials + Read + Write,
-    Flow::CredError: ScopedError
+    Prin: Clone + Display + Eq + Hash,
+    Stream::Cred: TryInto<Prin>,
+    Stream: Credentials + Read + Write,
+    Stream::CredError: ScopedError
 {
-    type AuthNSession = BasicAuthNed<Self::Prin, Flow>;
-    type Error = SessionAuthNError<Flow::CredError, Infallible>;
-    type Prin = Cred;
+    type NegotiateError = SessionAuthNError<Stream::CredError, Infallible>;
 
+    /// Perform negotiations.
     #[inline]
-    fn session_authn_nonblock(
-        &self,
-        flow: Flow
-    ) -> Result<
-        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Flow>,
-        Self::Error
-    > {
-        Ok(NonblockResult::Success(self.session_authn(flow)?))
-    }
-
-    fn session_authn(
-        &self,
-        flow: Flow
-    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Self::Error>
+    fn negotiate(
+        self
+    ) -> Result<AuthNResult<BasicAuthNed<Prin, Stream>, ()>, Self::NegotiateError>
     {
-        let cred = flow
+        let cred = self
+            .stream
             .creds()
             .map_err(|err| SessionAuthNError::Cred { err: err })?;
 
@@ -502,7 +502,7 @@ where
                            cred);
 
                     Ok(AuthNResult::Accept(BasicAuthNed {
-                        content: flow,
+                        content: self.stream,
                         prin: cred
                     }))
                 }
@@ -523,35 +523,60 @@ where
     }
 }
 
-impl<Prin, Cred, Flow> SessionAuthN<Flow> for TestAuthN<Prin, Cred>
+impl<Stream, Prin> Negotiator<Stream> for TrivialAuthN<Prin>
+where
+    Prin: Clone + Display + Eq + Hash,
+    Stream::Cred: TryInto<Prin>,
+    Stream: Credentials + Read + Write,
+    Stream::CredError: ScopedError
+{
+    type Outcome = AuthNResult<BasicAuthNed<Prin, Stream>, ()>;
+    type StartError = Infallible;
+    type State<'a>
+        = TrivialSessionNegotiation<Stream>
+    where
+        Prin: 'a;
+
+    #[inline]
+    fn start(
+        &self,
+        stream: Stream
+    ) -> Result<TrivialSessionNegotiation<Stream>, Self::StartError> {
+        Ok(TrivialSessionNegotiation { stream: stream })
+    }
+}
+
+impl<Flow, Cred> SessionAuthN<Flow> for TrivialAuthN<Cred>
 where
     Cred: Clone + Display + Eq + Hash,
     Flow::Cred: TryInto<Cred>,
     Flow: Credentials + Read + Write,
-    Flow::CredError: ScopedError,
-    Prin: Clone + Display + Eq + Hash
+    Flow::CredError: ScopedError
 {
     type AuthNSession = BasicAuthNed<Self::Prin, Flow>;
-    type Error = SessionAuthNError<Flow::CredError, Infallible>;
-    type Prin = Prin;
+    type Prin = Cred;
+}
 
+impl<'a, Stream, Cred, Prin>
+    Negotiation<'a, AuthNResult<BasicAuthNed<Prin, Stream>, ()>>
+    for TestAuthNSessionNegotiation<'a, Stream, Prin, Cred>
+where
+    Cred: Clone + Display + Eq + Hash,
+    Stream::Cred: TryInto<Cred>,
+    Stream: Credentials + Read + Write,
+    Stream::CredError: ScopedError,
+    Prin: Clone + Display + Eq + Hash
+{
+    type NegotiateError = SessionAuthNError<Stream::CredError, Infallible>;
+
+    /// Perform negotiations.
     #[inline]
-    fn session_authn_nonblock(
-        &self,
-        flow: Flow
-    ) -> Result<
-        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Flow>,
-        Self::Error
-    > {
-        Ok(NonblockResult::Success(self.session_authn(flow)?))
-    }
-
-    fn session_authn(
-        &self,
-        flow: Flow
-    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Self::Error>
+    fn negotiate(
+        self
+    ) -> Result<AuthNResult<BasicAuthNed<Prin, Stream>, ()>, Self::NegotiateError>
     {
-        let cred = flow
+        let cred = self
+            .stream
             .creds()
             .map_err(|err| SessionAuthNError::Cred { err: err })?;
 
@@ -562,9 +587,9 @@ where
                            "harvested credentials from session: {}",
                            cred);
 
-                    match self.prins.get(&cred) {
+                    match self.info.prins.get(&cred) {
                         Some(prin) => Ok(AuthNResult::Accept(BasicAuthNed {
-                            content: flow,
+                            content: self.stream,
                             prin: prin.clone()
                         })),
                         None => Ok(AuthNResult::Reject(()))
@@ -587,36 +612,47 @@ where
     }
 }
 
-impl<Prin, Cred, Flow> SessionAuthN<Flow> for Arc<TestAuthN<Prin, Cred>>
+impl<Stream, Cred, Prin> Negotiator<Stream> for TestAuthN<Prin, Cred>
 where
     Cred: Clone + Display + Eq + Hash,
-    Flow::Cred: TryInto<Cred>,
-    Flow: Credentials + Read + Write,
-    Flow::CredError: ScopedError,
+    Stream::Cred: TryInto<Cred>,
+    Stream: Credentials + Read + Write,
+    Stream::CredError: ScopedError,
     Prin: Clone + Display + Eq + Hash
 {
-    type AuthNSession = BasicAuthNed<Self::Prin, Flow>;
-    type Error = SessionAuthNError<Flow::CredError, Infallible>;
-    type Prin = Prin;
+    type Outcome = AuthNResult<BasicAuthNed<Prin, Stream>, ()>;
+    type StartError = Infallible;
+    type State<'a>
+        = TestAuthNSessionNegotiation<'a, Stream, Prin, Cred>
+    where
+        Prin: 'a,
+        Cred: 'a;
 
     #[inline]
-    fn session_authn_nonblock(
+    fn start(
         &self,
-        flow: Flow
+        stream: Stream
     ) -> Result<
-        NonblockResult<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Flow>,
-        Self::Error
+        TestAuthNSessionNegotiation<'_, Stream, Prin, Cred>,
+        Self::StartError
     > {
-        Ok(NonblockResult::Success(self.session_authn(flow)?))
+        Ok(TestAuthNSessionNegotiation {
+            stream: stream,
+            info: self
+        })
     }
+}
 
-    fn session_authn(
-        &self,
-        flow: Flow
-    ) -> Result<AuthNResult<BasicAuthNed<Self::Prin, Flow>, ()>, Self::Error>
-    {
-        self.as_ref().session_authn(flow)
-    }
+impl<Stream, Prin, Cred> SessionAuthN<Stream> for TestAuthN<Prin, Cred>
+where
+    Stream::Cred: TryInto<Cred>,
+    Stream: Credentials + Read + Write,
+    Stream::CredError: ScopedError,
+    Cred: Clone + Display + Eq + Hash,
+    Prin: Clone + Display + Eq + Hash
+{
+    type AuthNSession = BasicAuthNed<Self::Prin, Stream>;
+    type Prin = Prin;
 }
 
 unsafe impl<Prin, Cred> Sync for TestAuthN<Prin, Cred> where
