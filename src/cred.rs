@@ -18,6 +18,7 @@
 
 //! Credential-harvesting functionality.
 use std::convert::Infallible;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
 #[cfg(feature = "unix")]
@@ -56,7 +57,7 @@ pub trait Credentials {
     /// Type of credentials.
     type Cred;
     /// Type of error that can occur obtaining credentials.
-    type CredError: Display;
+    type CredError: Debug + Display;
 
     /// Get credentials for this object.
     fn creds(&self) -> Result<Option<Self::Cred>, Self::CredError>;
@@ -70,7 +71,7 @@ pub trait CredentialsMut {
     /// Type of credentials.
     type Cred;
     /// Type of error that can occur obtaining credentials.
-    type CredError: Display;
+    type CredError: Debug + Display;
 
     /// Get credentials for this object.
     fn creds(&mut self) -> Result<Option<Self::Cred>, Self::CredError>;

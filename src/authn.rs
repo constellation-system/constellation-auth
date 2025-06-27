@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::convert::TryInto;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Error;
 use std::fmt::Formatter;
@@ -71,7 +72,7 @@ pub trait AuthNMsgRecv<Prin, Msg, AuthNMsg>
 where
     AuthNMsg: AuthNed<Prin, Msg> {
     /// Errors that can occur reporting messages.
-    type RecvError: Display + ScopedError;
+    type RecvError: Debug + Display + ScopedError;
 
     /// Receive an authenticated message.
     fn recv_auth_msg(
@@ -94,7 +95,7 @@ pub trait SessionAuthN<Stream>:
 where
     Stream: Credentials + Read + Write {
     /// Type of session prinicpals.
-    type Prin: Clone + Display + Eq + Hash;
+    type Prin: Clone + Debug + Display + Eq + Hash;
     /// Type of authenticated flows produced by this authenticator.
     type AuthNSession: AuthNed<Self::Prin, Stream>;
 }
@@ -110,11 +111,11 @@ where
 /// This permits message authenticators to handle forwarded messages.
 pub trait MsgAuthN<Msg, Wrapper> {
     /// Type of session principals.
-    type SessionPrin: Clone + Display + Eq + Hash;
+    type SessionPrin: Clone + Debug + Display + Eq + Hash;
     /// Type of principals assigned to messages.
-    type Prin: Display + Clone;
+    type Prin: Debug + Display + Clone;
     /// Errors that can occur during message authentication.
-    type Error: Display + ScopedError;
+    type Error: Debug + Display + ScopedError;
     /// Type of authenticated messages produced by this authenticator.
     type AuthNMsg: AuthNed<Self::Prin, Msg>;
 
@@ -145,16 +146,16 @@ pub trait MsgAuthNTypes<Msg> {
     /// Type of wrapper messages.
     type Wrapper;
     /// Type of principals assigned to messages.
-    type Prin: Display + Clone;
+    type Prin: Debug + Display + Clone;
     /// Type of session principals.
-    type SessionPrin: Clone + Display + Eq + Hash;
+    type SessionPrin: Clone + Debug + Display + Eq + Hash;
     type DecoderConfig: Default;
-    type DecodeError: Display;
+    type DecodeError: Debug + Display;
     /// Type of [Decoder]s used to decode messages of type
     /// [Wrapper](AuthNTypes::Wrapper).
     type Decoder: Create<Config = Self::DecoderConfig>
         + Decoder<Self::Wrapper, DecodeError = Self::DecodeError>;
-    type AuthNError: Display;
+    type AuthNError: Debug + Display;
     /// Type of message authenticators.
     type MsgAuthN: MsgAuthN<
         Msg,
@@ -370,7 +371,7 @@ unsafe impl<Msg, Prin> Sync for PassthruMsgAuthN<Msg, Prin> where
 
 impl<Msg, Prin> MsgAuthN<Msg, Msg> for PassthruMsgAuthN<Msg, Prin>
 where
-    Prin: Clone + Display + Eq + Hash
+    Prin: Clone + Debug + Display + Eq + Hash
 {
     type AuthNMsg = BasicAuthNed<Prin, Msg>;
     type Error = Infallible;
@@ -548,7 +549,7 @@ where
 
 impl<Flow, Cred> SessionAuthN<Flow> for TrivialAuthN<Cred>
 where
-    Cred: Clone + Display + Eq + Hash,
+    Cred: Clone + Debug + Display + Eq + Hash,
     Flow::Cred: TryInto<Cred>,
     Flow: Credentials + Read + Write,
     Flow::CredError: ScopedError
@@ -649,7 +650,7 @@ where
     Stream: Credentials + Read + Write,
     Stream::CredError: ScopedError,
     Cred: Clone + Display + Eq + Hash,
-    Prin: Clone + Display + Eq + Hash
+    Prin: Clone + Debug + Display + Eq + Hash
 {
     type AuthNSession = BasicAuthNed<Self::Prin, Stream>;
     type Prin = Prin;
