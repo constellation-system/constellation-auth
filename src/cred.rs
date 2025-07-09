@@ -302,14 +302,35 @@ where
 #[cfg(feature = "openssl")]
 impl<S> CredentialsMut for SslStream<S>
 where
-    S: Credentials + Read + Write
+    S: CredentialsMut + Read + Write
 {
     type Cred = SSLCred<S::Cred>;
     type CredError = S::CredError;
 
     #[inline]
     fn creds(&mut self) -> Result<Option<Self::Cred>, S::CredError> {
-        <Self as Credentials>::creds(self)
+        let inner = self.get_mut().creds()?;
+        let ssl = self.ssl();
+        let seclvl = ssl.security_level();
+
+        Ok(ssl
+            .peer_certificate()
+            .and_then(|peer_cert| {
+                ssl.session().map(|session| (peer_cert, session.id()))
+            })
+            .map(|(peer_cert, session_id)| {
+                let chain = ssl.verified_chain().map(|stack| {
+                    stack.into_iter().map(|cert| cert.to_owned()).collect()
+                });
+
+                SSLCred {
+                    inner: inner,
+                    session_id: session_id.to_vec(),
+                    peer_cert: peer_cert,
+                    peer_cert_chain: chain,
+                    seclvl: seclvl
+                }
+            }))
     }
 }
 
