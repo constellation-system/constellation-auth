@@ -35,6 +35,7 @@ use constellation_common::error::ErrorScope;
 use constellation_common::error::RecoverableError;
 use constellation_common::error::ScopedError;
 use constellation_common::net::Negotiator;
+use constellation_common::net::NegotiatorResult;
 use constellation_common::net::NegotiatorStart;
 use log::trace;
 
@@ -92,8 +93,8 @@ where
 /// The result of successful authentication should be a session
 /// principal.
 pub trait SessionAuthN<Stream>:
-    Negotiator<Outcome = AuthNResult<Self::AuthNSession, ()>>
-    + NegotiatorStart<Stream>
+    Negotiator<AuthNResult<Self::AuthNSession, ()>>
+    + NegotiatorStart<AuthNResult<Self::AuthNSession, ()>, Stream>
 where
     Stream: Credentials + Read + Write {
     /// Type of session prinicpals.
@@ -462,12 +463,13 @@ where
     }
 }
 
-impl<Stream> Negotiator for PassthruSessionAuthN<Stream>
+impl<Stream> Negotiator<AuthNResult<NullAuthNed<Stream>, ()>>
+    for PassthruSessionAuthN<Stream>
 where
     Stream: Credentials + Read + Write
 {
     type NegotiateError = Infallible;
-    type Outcome = AuthNResult<NullAuthNed<Stream>, ()>;
+    type Pending = Infallible;
     type State = PassthruSessionNegotiation<Stream>;
 
     /// Perform negotiations.
@@ -475,23 +477,31 @@ where
     fn negotiate(
         &self,
         state: PassthruSessionNegotiation<Stream>
-    ) -> Result<AuthNResult<NullAuthNed<Stream>, ()>, Self::NegotiateError>
-    {
-        Ok(AuthNResult::Accept(NullAuthNed {
-            content: state.stream
-        }))
+    ) -> Result<
+        NegotiatorResult<AuthNResult<NullAuthNed<Stream>, ()>, Self::Pending>,
+        Self::NegotiateError
+    > {
+        Ok(NegotiatorResult::Complete(AuthNResult::Accept(
+            NullAuthNed {
+                content: state.stream
+            }
+        )))
     }
 
     #[inline]
     fn complete_negotiate(
         &self,
         _err: Infallible
-    ) -> Result<Self::Outcome, Self::NegotiateError> {
+    ) -> Result<
+        NegotiatorResult<AuthNResult<NullAuthNed<Stream>, ()>, Self::Pending>,
+        Self::NegotiateError
+    > {
         panic!("This should never be called!")
     }
 }
 
-impl<Stream> NegotiatorStart<Stream> for PassthruSessionAuthN<Stream>
+impl<Stream> NegotiatorStart<AuthNResult<NullAuthNed<Stream>, ()>, Stream>
+    for PassthruSessionAuthN<Stream>
 where
     Stream: Credentials + Read + Write
 {
@@ -514,7 +524,9 @@ where
     type Prin = NullCred;
 }
 
-impl<Stream, Prin> NegotiatorStart<Stream> for TrivialAuthN<Prin, Stream>
+impl<Stream, Prin>
+    NegotiatorStart<AuthNResult<BasicAuthNed<Prin, Stream>, ()>, Stream>
+    for TrivialAuthN<Prin, Stream>
 where
     Prin: Clone + Display + Eq + Hash,
     Stream::Cred: TryInto<Prin>,
@@ -532,7 +544,8 @@ where
     }
 }
 
-impl<Stream, Prin> Negotiator for TrivialAuthN<Prin, Stream>
+impl<Stream, Prin> Negotiator<AuthNResult<BasicAuthNed<Prin, Stream>, ()>>
+    for TrivialAuthN<Prin, Stream>
 where
     Prin: Clone + Display + Eq + Hash,
     Stream::Cred: TryInto<Prin>,
@@ -540,7 +553,7 @@ where
     Stream::CredError: ScopedError
 {
     type NegotiateError = SessionAuthNError<Stream::CredError, Infallible>;
-    type Outcome = AuthNResult<BasicAuthNed<Prin, Stream>, ()>;
+    type Pending = Infallible;
     type State = TrivialSessionNegotiation<Stream>;
 
     /// Perform negotiations.
@@ -548,7 +561,13 @@ where
     fn negotiate(
         &self,
         state: TrivialSessionNegotiation<Stream>
-    ) -> Result<Self::Outcome, Self::NegotiateError> {
+    ) -> Result<
+        NegotiatorResult<
+            AuthNResult<BasicAuthNed<Prin, Stream>, ()>,
+            Self::Pending
+        >,
+        Self::NegotiateError
+    > {
         let cred = state
             .stream
             .creds()
@@ -561,23 +580,25 @@ where
                            "harvested credentials from session: {}",
                            cred);
 
-                    Ok(AuthNResult::Accept(BasicAuthNed {
-                        content: state.stream,
-                        prin: cred
-                    }))
+                    Ok(NegotiatorResult::Complete(AuthNResult::Accept(
+                        BasicAuthNed {
+                            content: state.stream,
+                            prin: cred
+                        }
+                    )))
                 }
                 Err(_) => {
                     trace!(target: "test-authn",
                            "failed to convert harvested credentials");
 
-                    Ok(AuthNResult::Reject(()))
+                    Ok(NegotiatorResult::Complete(AuthNResult::Reject(())))
                 }
             },
             None => {
                 trace!(target: "test-authn",
                        "no harvested credentials from session");
 
-                Ok(AuthNResult::Reject(()))
+                Ok(NegotiatorResult::Complete(AuthNResult::Reject(())))
             }
         }
     }
@@ -586,7 +607,13 @@ where
     fn complete_negotiate(
         &self,
         _err: Infallible
-    ) -> Result<Self::Outcome, Self::NegotiateError> {
+    ) -> Result<
+        NegotiatorResult<
+            AuthNResult<BasicAuthNed<Prin, Stream>, ()>,
+            Self::Pending
+        >,
+        Self::NegotiateError
+    > {
         panic!("This should never be called!")
     }
 }
@@ -602,7 +629,8 @@ where
     type Prin = Cred;
 }
 
-impl<Stream, Cred, Prin> NegotiatorStart<Stream>
+impl<Stream, Cred, Prin>
+    NegotiatorStart<AuthNResult<BasicAuthNed<Prin, Stream>, ()>, Stream>
     for TestAuthN<Prin, Cred, Stream>
 where
     Cred: Clone + Display + Eq + Hash,
@@ -622,7 +650,8 @@ where
     }
 }
 
-impl<Stream, Cred, Prin> Negotiator for TestAuthN<Prin, Cred, Stream>
+impl<Stream, Cred, Prin> Negotiator<AuthNResult<BasicAuthNed<Prin, Stream>, ()>>
+    for TestAuthN<Prin, Cred, Stream>
 where
     Cred: Clone + Display + Eq + Hash,
     Stream::Cred: TryInto<Cred>,
@@ -631,7 +660,7 @@ where
     Prin: Clone + Display + Eq + Hash
 {
     type NegotiateError = SessionAuthNError<Stream::CredError, Infallible>;
-    type Outcome = AuthNResult<BasicAuthNed<Prin, Stream>, ()>;
+    type Pending = Infallible;
     type State = TestAuthNSessionNegotiation<Stream>;
 
     /// Perform negotiations.
@@ -639,7 +668,13 @@ where
     fn negotiate(
         &self,
         state: TestAuthNSessionNegotiation<Stream>
-    ) -> Result<Self::Outcome, Self::NegotiateError> {
+    ) -> Result<
+        NegotiatorResult<
+            AuthNResult<BasicAuthNed<Prin, Stream>, ()>,
+            Self::Pending
+        >,
+        Self::NegotiateError
+    > {
         let cred = state
             .stream
             .creds()
@@ -653,25 +688,29 @@ where
                            cred);
 
                     match self.prins.get(&cred) {
-                        Some(prin) => Ok(AuthNResult::Accept(BasicAuthNed {
-                            content: state.stream,
-                            prin: prin.clone()
-                        })),
-                        None => Ok(AuthNResult::Reject(()))
+                        Some(prin) => Ok(NegotiatorResult::Complete(
+                            AuthNResult::Accept(BasicAuthNed {
+                                content: state.stream,
+                                prin: prin.clone()
+                            })
+                        )),
+                        None => Ok(NegotiatorResult::Complete(
+                            AuthNResult::Reject(())
+                        ))
                     }
                 }
                 Err(_) => {
                     trace!(target: "test-authn",
                            "failed to convert harvested credentials");
 
-                    Ok(AuthNResult::Reject(()))
+                    Ok(NegotiatorResult::Complete(AuthNResult::Reject(())))
                 }
             },
             None => {
                 trace!(target: "test-authn",
                        "no harvested credentials from session");
 
-                Ok(AuthNResult::Reject(()))
+                Ok(NegotiatorResult::Complete(AuthNResult::Reject(())))
             }
         }
     }
@@ -680,7 +719,13 @@ where
     fn complete_negotiate(
         &self,
         _err: Infallible
-    ) -> Result<Self::Outcome, Self::NegotiateError> {
+    ) -> Result<
+        NegotiatorResult<
+            AuthNResult<BasicAuthNed<Prin, Stream>, ()>,
+            Self::Pending
+        >,
+        Self::NegotiateError
+    > {
         panic!("This should never be called!")
     }
 }
