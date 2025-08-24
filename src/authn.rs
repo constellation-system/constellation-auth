@@ -505,11 +505,13 @@ impl<Stream> NegotiatorStart<AuthNResult<NullAuthNed<Stream>, ()>, Stream>
 where
     Stream: Credentials + Read + Write
 {
+    type Param = ();
     type StartError = Infallible;
 
     #[inline]
     fn start(
         &self,
+        _param: &(),
         stream: Stream
     ) -> Result<PassthruSessionNegotiation<Stream>, Self::StartError> {
         Ok(PassthruSessionNegotiation { stream: stream })
@@ -533,11 +535,13 @@ where
     Stream: Credentials + Read + Write,
     Stream::CredError: ScopedError
 {
+    type Param = ();
     type StartError = Infallible;
 
     #[inline]
     fn start(
         &self,
+        _param: &(),
         stream: Stream
     ) -> Result<TrivialSessionNegotiation<Stream>, Self::StartError> {
         Ok(TrivialSessionNegotiation { stream: stream })
@@ -639,11 +643,13 @@ where
     Stream::CredError: ScopedError,
     Prin: Clone + Display + Eq + Hash
 {
+    type Param = ();
     type StartError = Infallible;
 
     #[inline]
     fn start(
         &self,
+        _param: &(),
         stream: Stream
     ) -> Result<TestAuthNSessionNegotiation<Stream>, Self::StartError> {
         Ok(TestAuthNSessionNegotiation { stream: stream })
