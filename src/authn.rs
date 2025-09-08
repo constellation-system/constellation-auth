@@ -96,7 +96,7 @@ pub trait SessionAuthN<Stream>:
     Negotiator<AuthNResult<Self::AuthNSession, ()>>
     + NegotiatorStart<AuthNResult<Self::AuthNSession, ()>, Stream>
 where
-    Stream: Credentials + Read + Write {
+    Stream: Read + Write {
     /// Type of session prinicpals.
     type Prin: Clone + Debug + Display + Eq + Hash;
     /// Type of authenticated flows produced by this authenticator.
