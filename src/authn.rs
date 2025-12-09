@@ -101,6 +101,24 @@ where
     type Prin: Clone + Debug + Display + Eq + Hash;
     /// Type of authenticated flows produced by this authenticator.
     type AuthNSession: AuthNed<Self::Prin, Stream>;
+
+    /// Try to recover the underlying stream from a negotiation error.
+    #[inline]
+    fn err_stream(
+        &self,
+        _err: Self::NegotiateError
+    ) -> Option<Stream> {
+        None
+    }
+
+    /// Try to recover the underlying stream from a negotiation error.
+    #[inline]
+    fn start_err_stream(
+        &self,
+        _err: Self::StartError
+    ) -> Option<Stream> {
+        None
+    }
 }
 
 /// Trait for message authenticators.
