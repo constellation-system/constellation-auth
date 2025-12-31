@@ -288,6 +288,32 @@ pub enum TestAuthNCreateError<Convert, Cred> {
     Duplicate { cred: Cred }
 }
 
+impl<Accept, Reject> AuthNResult<Accept, Reject> {
+    pub fn map<F, T>(
+        self,
+        f: F
+    ) -> AuthNResult<T, Reject>
+    where
+        F: FnOnce(Accept) -> T {
+        match self {
+            AuthNResult::Accept(val) => AuthNResult::Accept(f(val)),
+            AuthNResult::Reject(val) => AuthNResult::Reject(val)
+        }
+    }
+
+    pub fn map_ok<F, T, E>(
+        self,
+        f: F
+    ) -> Result<AuthNResult<T, Reject>, E>
+    where
+        F: FnOnce(Accept) -> Result<T, E> {
+        match self {
+            AuthNResult::Accept(val) => Ok(AuthNResult::Accept(f(val)?)),
+            AuthNResult::Reject(val) => Ok(AuthNResult::Reject(val))
+        }
+    }
+}
+
 impl<Prin, T> AuthNed<Prin, T> for BasicAuthNed<Prin, T> {
     #[inline]
     fn prin(&self) -> &Prin {
@@ -496,8 +522,10 @@ where
         &self,
         state: PassthruSessionNegotiation<Stream>
     ) -> Result<
-        NegotiatorResult<AuthNResult<NullAuthNed<Stream>, Stream>,
-                         Self::Pending>,
+        NegotiatorResult<
+            AuthNResult<NullAuthNed<Stream>, Stream>,
+            Self::Pending
+        >,
         Self::NegotiateError
     > {
         Ok(NegotiatorResult::Complete(AuthNResult::Accept(
@@ -512,8 +540,10 @@ where
         &self,
         _err: Infallible
     ) -> Result<
-        NegotiatorResult<AuthNResult<NullAuthNed<Stream>, Stream>,
-                         Self::Pending>,
+        NegotiatorResult<
+            AuthNResult<NullAuthNed<Stream>, Stream>,
+            Self::Pending
+        >,
         Self::NegotiateError
     > {
         panic!("This should never be called!")
