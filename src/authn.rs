@@ -358,6 +358,29 @@ impl<T> AuthNed<NullCred, T> for NullAuthNed<T> {
     }
 }
 
+unsafe impl<Cred, Stream> Send for TrivialAuthN<Cred, Stream> where
+    Cred: Clone + Eq + Hash
+{
+}
+
+unsafe impl<Cred, Stream> Sync for TrivialAuthN<Cred, Stream> where
+    Cred: Clone + Eq + Hash
+{
+}
+
+impl<Cred, Stream> Create for TrivialAuthN<Cred, Stream>
+where
+    Cred: Clone + Eq + Hash
+{
+    type Config = ();
+    type CreateError = Infallible;
+
+    #[inline]
+    fn create(_config: Self::Config) -> Result<Self, Self::CreateError> {
+        Ok(TrivialAuthN::default())
+    }
+}
+
 impl<Cred, Stream> Default for TrivialAuthN<Cred, Stream>
 where
     Cred: Clone + Eq + Hash
@@ -580,7 +603,7 @@ impl<Stream, Prin>
     NegotiatorStart<AuthNResult<BasicAuthNed<Prin, Stream>, Stream>, Stream>
     for TrivialAuthN<Prin, Stream>
 where
-    Prin: Clone + Display + Eq + Hash,
+    Prin: Clone + Default + Display + Eq + Hash,
     Stream::Cred: TryInto<Prin>,
     Stream: Credentials + Read + Write,
     Stream::CredError: ScopedError
@@ -601,7 +624,7 @@ where
 impl<Stream, Prin> Negotiator<AuthNResult<BasicAuthNed<Prin, Stream>, Stream>>
     for TrivialAuthN<Prin, Stream>
 where
-    Prin: Clone + Display + Eq + Hash,
+    Prin: Clone + Default + Display + Eq + Hash,
     Stream::Cred: TryInto<Prin>,
     Stream: Credentials + Read + Write,
     Stream::CredError: ScopedError
@@ -629,15 +652,15 @@ where
 
         match cred {
             Some(cred) => match cred.try_into() {
-                Ok(cred) => {
-                    trace!(target: "test-authn",
+                Ok(prin) => {
+                    trace!(target: "trivial-authn",
                            "harvested credentials from session: {}",
-                           cred);
+                           prin);
 
                     Ok(NegotiatorResult::Complete(AuthNResult::Accept(
                         BasicAuthNed {
                             content: state.stream,
-                            prin: cred
+                            prin: prin
                         }
                     )))
                 }
@@ -651,12 +674,15 @@ where
                 }
             },
             None => {
-                trace!(target: "test-authn",
+                trace!(target: "trivial-authn",
                        "no harvested credentials from session");
 
-                let stream = state.stream;
-
-                Ok(NegotiatorResult::Complete(AuthNResult::Reject(stream)))
+                Ok(NegotiatorResult::Complete(AuthNResult::Accept(
+                    BasicAuthNed {
+                        content: state.stream,
+                        prin: Prin::default()
+                    }
+                )))
             }
         }
     }
@@ -678,7 +704,7 @@ where
 
 impl<Flow, Cred> SessionAuthN<Flow> for TrivialAuthN<Cred, Flow>
 where
-    Cred: Clone + Debug + Display + Eq + Hash,
+    Cred: Clone + Debug + Default + Display + Eq + Hash,
     Flow::Cred: TryInto<Cred>,
     Flow: Credentials + Read + Write,
     Flow::CredError: ScopedError
