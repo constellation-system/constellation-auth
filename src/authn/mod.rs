@@ -17,7 +17,6 @@
 // <https://www.gnu.org/licenses/>.
 
 //! Authentication traits.
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::convert::TryInto;
 use std::fmt::Debug;
@@ -39,9 +38,10 @@ use constellation_common::net::NegotiatorResult;
 use constellation_common::net::NegotiatorStart;
 use log::trace;
 
-use crate::config::TestAuthNConfig;
 use crate::cred::Credentials;
 use crate::cred::NullCred;
+
+pub mod test;
 
 /// Trait for authenticated objects, produced by [SessionAuthN] or
 /// [MsgAuthN] instances.
@@ -263,29 +263,9 @@ pub struct TrivialAuthN<Cred: Clone + Eq + Hash, Stream> {
     cred: PhantomData<Cred>
 }
 
-pub struct TestAuthNSessionNegotiation<Stream> {
-    stream: Stream
-}
-
-/// An authenticator that consists solely of a static lookup table.
-pub struct TestAuthN<Prin, Cred: Clone + Eq + Hash, Stream> {
-    stream: PhantomData<Stream>,
-    prins: HashMap<Cred, Prin>
-}
-
-pub struct NullAuthNed<T> {
-    content: T
-}
-
 pub struct BasicAuthNed<Prin, T> {
     prin: Prin,
     content: T
-}
-
-#[derive(Debug)]
-pub enum TestAuthNCreateError<Convert, Cred> {
-    Convert { err: Convert },
-    Duplicate { cred: Cred }
 }
 
 impl<Accept, Reject> AuthNResult<Accept, Reject> {
@@ -333,28 +313,6 @@ impl<Prin, T> AuthNed<Prin, T> for BasicAuthNed<Prin, T> {
     #[inline]
     fn take(self) -> (Prin, T) {
         (self.prin, self.content)
-    }
-}
-
-impl<T> AuthNed<NullCred, T> for NullAuthNed<T> {
-    #[inline]
-    fn prin(&self) -> &NullCred {
-        &NullCred
-    }
-
-    #[inline]
-    fn get(&self) -> &T {
-        &self.content
-    }
-
-    #[inline]
-    fn get_mut(&mut self) -> &mut T {
-        &mut self.content
-    }
-
-    #[inline]
-    fn take(self) -> (NullCred, T) {
-        (NullCred, self.content)
     }
 }
 
@@ -475,49 +433,6 @@ where
     }
 }
 
-impl<Prin, Cred, Stream> TestAuthN<Prin, Cred, Stream>
-where
-    Prin: Clone + Eq + Hash,
-    Cred: Clone + Eq + Hash
-{
-    #[inline]
-    pub fn from_parties<I>(parties: I) -> Self
-    where
-        I: Iterator<Item = (Cred, Prin)> {
-        TestAuthN {
-            stream: PhantomData,
-            prins: parties.collect()
-        }
-    }
-
-    pub fn create<CredConfig>(
-        config: TestAuthNConfig<Prin, CredConfig>
-    ) -> Result<Self, TestAuthNCreateError<CredConfig::Error, Cred>>
-    where
-        CredConfig: TryInto<Cred> {
-        let mut prins = HashMap::new();
-
-        for prin in config.into_iter() {
-            let (prin, creds) = prin.take();
-
-            for cred in creds.into_iter() {
-                let cred = cred.try_into().map_err(|err| {
-                    TestAuthNCreateError::Convert { err: err }
-                })?;
-
-                if prins.insert(cred.clone(), prin.clone()).is_some() {
-                    return Err(TestAuthNCreateError::Duplicate { cred: cred });
-                }
-            }
-        }
-
-        Ok(TestAuthN {
-            stream: PhantomData,
-            prins: prins
-        })
-    }
-}
-
 impl<Stream> Default for PassthruSessionAuthN<Stream>
 where
     Stream: Credentials + Read + Write
@@ -530,7 +445,7 @@ where
     }
 }
 
-impl<Stream> Negotiator<AuthNResult<NullAuthNed<Stream>, Stream>>
+impl<Stream> Negotiator<AuthNResult<BasicAuthNed<NullCred, Stream>, Stream>>
     for PassthruSessionAuthN<Stream>
 where
     Stream: Credentials + Read + Write
@@ -546,14 +461,15 @@ where
         state: PassthruSessionNegotiation<Stream>
     ) -> Result<
         NegotiatorResult<
-            AuthNResult<NullAuthNed<Stream>, Stream>,
+            AuthNResult<BasicAuthNed<NullCred, Stream>, Stream>,
             Self::Pending
         >,
         Self::NegotiateError
     > {
         Ok(NegotiatorResult::Complete(AuthNResult::Accept(
-            NullAuthNed {
-                content: state.stream
+            BasicAuthNed {
+                content: state.stream,
+                prin: NullCred
             }
         )))
     }
@@ -564,7 +480,7 @@ where
         _err: Infallible
     ) -> Result<
         NegotiatorResult<
-            AuthNResult<NullAuthNed<Stream>, Stream>,
+            AuthNResult<BasicAuthNed<NullCred, Stream>, Stream>,
             Self::Pending
         >,
         Self::NegotiateError
@@ -573,7 +489,8 @@ where
     }
 }
 
-impl<Stream> NegotiatorStart<AuthNResult<NullAuthNed<Stream>, Stream>, Stream>
+impl<Stream>
+    NegotiatorStart<AuthNResult<BasicAuthNed<NullCred, Stream>, Stream>, Stream>
     for PassthruSessionAuthN<Stream>
 where
     Stream: Credentials + Read + Write
@@ -595,7 +512,7 @@ impl<Flow> SessionAuthN<Flow> for PassthruSessionAuthN<Flow>
 where
     Flow: Credentials + Read + Write
 {
-    type AuthNSession = NullAuthNed<Flow>;
+    type AuthNSession = BasicAuthNed<NullCred, Flow>;
     type Prin = NullCred;
 }
 
@@ -713,131 +630,6 @@ where
     type Prin = Cred;
 }
 
-impl<Stream, Cred, Prin>
-    NegotiatorStart<AuthNResult<BasicAuthNed<Prin, Stream>, Stream>, Stream>
-    for TestAuthN<Prin, Cred, Stream>
-where
-    Cred: Clone + Display + Eq + Hash,
-    Stream::Cred: TryInto<Cred>,
-    Stream: Credentials + Read + Write,
-    Stream::CredError: ScopedError,
-    Prin: Clone + Display + Eq + Hash
-{
-    type Param = ();
-    type StartError = Infallible;
-
-    #[inline]
-    fn start(
-        &self,
-        _param: &(),
-        stream: Stream
-    ) -> Result<TestAuthNSessionNegotiation<Stream>, Self::StartError> {
-        Ok(TestAuthNSessionNegotiation { stream: stream })
-    }
-}
-
-impl<Stream, Cred, Prin>
-    Negotiator<AuthNResult<BasicAuthNed<Prin, Stream>, Stream>>
-    for TestAuthN<Prin, Cred, Stream>
-where
-    Cred: Clone + Display + Eq + Hash,
-    Stream::Cred: TryInto<Cred>,
-    Stream: Credentials + Read + Write,
-    Stream::CredError: ScopedError,
-    Prin: Clone + Display + Eq + Hash
-{
-    type NegotiateError = SessionAuthNError<Stream::CredError, Infallible>;
-    type Pending = Infallible;
-    type State = TestAuthNSessionNegotiation<Stream>;
-
-    /// Perform negotiations.
-    #[inline]
-    fn negotiate(
-        &self,
-        state: TestAuthNSessionNegotiation<Stream>
-    ) -> Result<
-        NegotiatorResult<
-            AuthNResult<BasicAuthNed<Prin, Stream>, Stream>,
-            Self::Pending
-        >,
-        Self::NegotiateError
-    > {
-        let cred = state
-            .stream
-            .creds()
-            .map_err(|err| SessionAuthNError::Cred { err: err })?;
-
-        match cred {
-            Some(cred) => match cred.try_into() {
-                Ok(cred) => {
-                    trace!(target: "test-authn",
-                           "harvested credentials from session: {}",
-                           cred);
-
-                    match self.prins.get(&cred) {
-                        Some(prin) => Ok(NegotiatorResult::Complete(
-                            AuthNResult::Accept(BasicAuthNed {
-                                content: state.stream,
-                                prin: prin.clone()
-                            })
-                        )),
-                        None => Ok(NegotiatorResult::Complete(
-                            AuthNResult::Reject(state.stream)
-                        ))
-                    }
-                }
-                Err(_) => {
-                    trace!(target: "test-authn",
-                           "failed to convert harvested credentials");
-
-                    let stream = state.stream;
-
-                    Ok(NegotiatorResult::Complete(AuthNResult::Reject(stream)))
-                }
-            },
-            None => {
-                trace!(target: "test-authn",
-                       "no harvested credentials from session");
-
-                let stream = state.stream;
-
-                Ok(NegotiatorResult::Complete(AuthNResult::Reject(stream)))
-            }
-        }
-    }
-
-    #[inline]
-    fn complete_negotiate(
-        &self,
-        _err: Infallible
-    ) -> Result<
-        NegotiatorResult<
-            AuthNResult<BasicAuthNed<Prin, Stream>, Stream>,
-            Self::Pending
-        >,
-        Self::NegotiateError
-    > {
-        panic!("This should never be called!")
-    }
-}
-
-impl<Stream, Prin, Cred> SessionAuthN<Stream> for TestAuthN<Prin, Cred, Stream>
-where
-    Stream::Cred: TryInto<Cred>,
-    Stream: Credentials + Read + Write,
-    Stream::CredError: ScopedError,
-    Cred: Clone + Display + Eq + Hash,
-    Prin: Clone + Debug + Display + Eq + Hash
-{
-    type AuthNSession = BasicAuthNed<Self::Prin, Stream>;
-    type Prin = Prin;
-}
-
-unsafe impl<Prin, Cred, Stream> Sync for TestAuthN<Prin, Cred, Stream> where
-    Cred: Clone + Eq + Hash
-{
-}
-
 impl<Cred, AuthN> Display for SessionAuthNError<Cred, AuthN>
 where
     Cred: Display,
@@ -850,24 +642,6 @@ where
         match self {
             SessionAuthNError::Cred { err } => err.fmt(f),
             SessionAuthNError::AuthN { err } => err.fmt(f)
-        }
-    }
-}
-
-impl<Prin, Cred> Display for TestAuthNCreateError<Prin, Cred>
-where
-    Prin: Display,
-    Cred: Display
-{
-    fn fmt(
-        &self,
-        f: &mut Formatter<'_>
-    ) -> Result<(), Error> {
-        match self {
-            TestAuthNCreateError::Convert { err } => err.fmt(f),
-            TestAuthNCreateError::Duplicate { cred } => {
-                write!(f, "duplicate credential {}", cred)
-            }
         }
     }
 }
