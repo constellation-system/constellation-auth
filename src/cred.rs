@@ -30,10 +30,6 @@ use std::io::Write;
 use std::net::TcpStream;
 #[cfg(feature = "unix")]
 use std::os::unix::net::SocketAddr;
-#[cfg(feature = "unix")]
-use std::os::unix::net::UCred;
-#[cfg(feature = "unix")]
-use std::os::unix::net::UnixStream;
 
 #[cfg(feature = "gssapi")]
 use libgssapi::context::ClientCtx;
@@ -342,36 +338,6 @@ where
                     seclvl: seclvl
                 }
             }))
-    }
-}
-
-#[cfg(feature = "unix")]
-impl Credentials for UnixStream {
-    type Cred = UnixSocketCred<UCred>;
-    type CredError = Error;
-
-    #[inline]
-    fn creds(&self) -> Result<Option<Self::Cred>, Error> {
-        let local = self.local_addr()?;
-        let peer = self.peer_addr()?;
-        let user = self.peer_cred()?;
-
-        Ok(Some(UnixSocketCred {
-            local: local,
-            peer: peer,
-            user: user
-        }))
-    }
-}
-
-#[cfg(feature = "unix")]
-impl CredentialsMut for UnixStream {
-    type Cred = UnixSocketCred<UCred>;
-    type CredError = Error;
-
-    #[inline]
-    fn creds(&mut self) -> Result<Option<Self::Cred>, Error> {
-        <Self as Credentials>::creds(self)
     }
 }
 
