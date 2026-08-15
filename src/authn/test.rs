@@ -16,6 +16,9 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
+use std::cell::Ref;
+use std::cell::RefCell;
+use std::cell::RefMut;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::convert::TryInto;
@@ -27,6 +30,7 @@ use std::hash::Hash;
 use std::io::Read;
 use std::io::Write;
 use std::marker::PhantomData;
+use std::rc::Rc;
 
 use constellation_common::error::ScopedError;
 use constellation_common::net::Negotiator;
@@ -54,9 +58,9 @@ pub struct TestAuthNSessionNegotiation<Stream> {
     stream: Stream
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct TestAuthNMsgRecv<Msg> {
-    msgs: Vec<Msg>
+    msgs: Rc<RefCell<Vec<Msg>>>
 }
 
 #[derive(Debug)]
@@ -65,11 +69,38 @@ pub enum TestAuthNCreateError<Convert, Cred> {
     Duplicate { cred: Cred }
 }
 
+impl<Msg> Default for TestAuthNMsgRecv<Msg> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<Msg> TestAuthNMsgRecv<Msg> {
+    #[inline]
+    pub fn new() -> Self {
+        TestAuthNMsgRecv {
+            msgs: Rc::new(RefCell::new(Vec::new()))
+        }
+    }
+
+    #[inline]
+    pub fn with_capacity(size: usize) -> Self {
+        TestAuthNMsgRecv {
+            msgs: Rc::new(RefCell::new(Vec::with_capacity(size)))
+        }
+    }
+
     /// Get the message buffer.
     #[inline]
-    pub fn msgs(&self) -> &[Msg] {
-        &self.msgs
+    pub fn msgs(&self) -> Ref<'_, Vec<Msg>> {
+        self.msgs.try_borrow().expect("try_borrow failed")
+    }
+
+    /// Get the message buffer.
+    #[inline]
+    pub fn msgs_mut(&mut self) -> RefMut<'_, Vec<Msg>> {
+        self.msgs.try_borrow_mut().expect("try_borrow failed")
     }
 }
 
@@ -85,7 +116,10 @@ impl<Msg> AuthNMsgRecv<NullCred, Msg, BasicAuthNed<NullCred, Msg>>
     ) -> Result<(), Self::RecvError> {
         let (_, msg) = msg.take();
 
-        self.msgs.push(msg);
+        self.msgs
+            .try_borrow_mut()
+            .expect("try_borrow failed")
+            .push(msg);
 
         Ok(())
     }

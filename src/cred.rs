@@ -200,6 +200,17 @@ impl<S> SSLCred<S> {
     pub fn seclvl(&self) -> u32 {
         self.seclvl
     }
+
+    #[inline]
+    pub fn take(self) -> (Option<S>, Vec<u8>, X509, Option<Vec<X509>>, u32) {
+        (
+            self.inner,
+            self.session_id,
+            self.peer_cert,
+            self.peer_cert_chain,
+            self.seclvl
+        )
+    }
 }
 
 impl Credentials for TcpStream {

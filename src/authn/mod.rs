@@ -41,6 +41,7 @@ use log::trace;
 use crate::cred::Credentials;
 use crate::cred::NullCred;
 
+pub mod basic;
 pub mod test;
 
 /// Trait for authenticated objects, produced by [SessionAuthN] or
@@ -263,6 +264,7 @@ pub struct TrivialAuthN<Cred: Clone + Eq + Hash, Stream> {
     cred: PhantomData<Cred>
 }
 
+#[derive(Clone)]
 pub struct BasicAuthNed<Prin, T> {
     prin: Prin,
     content: T
@@ -290,6 +292,19 @@ impl<Accept, Reject> AuthNResult<Accept, Reject> {
         match self {
             AuthNResult::Accept(val) => Ok(AuthNResult::Accept(f(val)?)),
             AuthNResult::Reject(val) => Ok(AuthNResult::Reject(val))
+        }
+    }
+}
+
+impl<Prin, T> BasicAuthNed<Prin, T> {
+    #[inline]
+    pub(crate) fn new(
+        prin: Prin,
+        content: T
+    ) -> Self {
+        BasicAuthNed {
+            prin: prin,
+            content: content
         }
     }
 }
@@ -375,6 +390,19 @@ where
             SessionAuthNError::Cred { err } => err.scope(),
             SessionAuthNError::AuthN { err } => err.scope()
         }
+    }
+}
+
+impl<Msg, Prin> Create for PassthruMsgAuthN<Msg, Prin>
+where
+    Prin: Clone + Display
+{
+    type Config = ();
+    type CreateError = Infallible;
+
+    #[inline]
+    fn create(_config: Self::Config) -> Result<Self, Self::CreateError> {
+        Ok(Self::default())
     }
 }
 
