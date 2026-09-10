@@ -46,3 +46,7 @@ log = { version = "0.4", optional = true }
 mio = { version = "1.0", features = ["net"] }
 openssl = { version = "0.10", optional = true }
 serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+env_logger = { version = "0.10" }
+yaml_serde = { version = "0.10" }

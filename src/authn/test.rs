@@ -40,7 +40,7 @@ use log::trace;
 
 use crate::authn::AuthNMsgRecv;
 use crate::authn::AuthNResult;
-use crate::authn::AuthNed;
+use crate::authn::AuthNedDestruct;
 use crate::authn::BasicAuthNed;
 use crate::authn::NullCred;
 use crate::authn::SessionAuthN;
@@ -104,7 +104,7 @@ impl<Msg> TestAuthNMsgRecv<Msg> {
     }
 }
 
-impl<Msg> AuthNMsgRecv<NullCred, Msg, BasicAuthNed<NullCred, Msg>>
+impl<Msg> AuthNMsgRecv<NullCred, BasicAuthNed<NullCred, Msg>>
     for TestAuthNMsgRecv<Msg>
 {
     type RecvError = Infallible;

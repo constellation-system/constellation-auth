@@ -19,12 +19,11 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use constellation_common::net::IPEndpoint;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(
-    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename = "test-cred")]
 #[serde(untagged)]
 pub enum TestCredConfig {
@@ -38,13 +37,11 @@ pub enum TestCredConfig {
 #[serde(rename = "test-authn-config")]
 #[serde(rename_all = "kebab-case")]
 pub struct TestAuthNPrinConfig<Prin, Cred> {
-    principal: Prin,
-    credentials: Vec<Cred>
+    prin: Prin,
+    cred: Vec<Cred>
 }
 
-#[derive(
-    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename = "basic-cred")]
 #[serde(untagged)]
 pub enum BasicCredConfig {
@@ -64,21 +61,21 @@ pub enum BasicCredConfig {
     }
 }
 
-#[derive(
-    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename = "unsafe-basic-cred")]
 #[serde(untagged)]
 pub enum UnsafeBasicCredConfig {
     IP {
         #[serde(rename = "ip")]
         unsafe_ip: SocketAddr
+    },
+    SOCKS5 {
+        #[serde(rename = "socks5")]
+        unsafe_ip: IPEndpoint
     }
 }
 
-#[derive(
-    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename = "basic-ssl-cred")]
 #[serde(rename_all = "kebab-case")]
 pub struct BasicSSLCredConfig {
@@ -104,8 +101,8 @@ pub struct BasicGSSAPICredConfig {
 #[serde(rename = "basic-authn-config")]
 #[serde(rename_all = "kebab-case")]
 pub struct BasicAuthNPrinConfig<Prin, Cred> {
-    principal: Prin,
-    credentials: Cred
+    prin: Prin,
+    cred: Cred
 }
 
 #[derive(
@@ -117,9 +114,7 @@ pub struct HostAuthNUnsafeConfig {
     allow_unsafe_ip_creds: bool
 }
 
-#[derive(
-    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
-)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename = "basic-authn-unsafe-config")]
 #[serde(rename_all = "kebab-case")]
 pub struct BasicAuthNConfig<Prin> {
@@ -188,56 +183,56 @@ impl BasicSSLCredConfig {
 impl<Prin, Cred> BasicAuthNPrinConfig<Prin, Cred> {
     #[inline]
     pub fn new(
-        principal: Prin,
-        creds: Cred
+        prin: Prin,
+        cred: Cred
     ) -> Self {
         BasicAuthNPrinConfig {
-            principal: principal,
-            credentials: creds
+            prin: prin,
+            cred: cred
         }
     }
 
     #[inline]
-    pub fn principal(&self) -> &Prin {
-        &self.principal
+    pub fn prin(&self) -> &Prin {
+        &self.prin
     }
 
     #[inline]
-    pub fn creds(&self) -> &Cred {
-        &self.credentials
+    pub fn cred(&self) -> &Cred {
+        &self.cred
     }
 
     #[inline]
     pub fn take(self) -> (Prin, Cred) {
-        (self.principal, self.credentials)
+        (self.prin, self.cred)
     }
 }
 
 impl<Prin, Cred> TestAuthNPrinConfig<Prin, Cred> {
     #[inline]
     pub fn new(
-        principal: Prin,
-        creds: Vec<Cred>
+        prin: Prin,
+        cred: Vec<Cred>
     ) -> Self {
         TestAuthNPrinConfig {
-            principal: principal,
-            credentials: creds
+            prin: prin,
+            cred: cred
         }
     }
 
     #[inline]
-    pub fn principal(&self) -> &Prin {
-        &self.principal
+    pub fn prin(&self) -> &Prin {
+        &self.prin
     }
 
     #[inline]
-    pub fn creds(&self) -> &[Cred] {
-        &self.credentials
+    pub fn cred(&self) -> &[Cred] {
+        &self.cred
     }
 
     #[inline]
     pub fn take(self) -> (Prin, Vec<Cred>) {
-        (self.principal, self.credentials)
+        (self.prin, self.cred)
     }
 }
 
@@ -279,4 +274,239 @@ impl HostAuthNUnsafeConfig {
     pub fn allow_unsafe_ip_creds(&self) -> bool {
         self.allow_unsafe_ip_creds
     }
+}
+
+#[cfg(test)]
+use constellation_common::net::IPEndpointAddr;
+
+#[test]
+fn test_deserialize_basic_cred_ssl_flat() {
+    let yaml = concat!(
+        "ssl:\n",
+        "  subject-name:\n",
+        "    - \"a\"\n",
+        "    - \"b\"\n",
+    );
+    let expected = BasicCredConfig::SSL {
+        ssl: BasicSSLCredConfig {
+            subject_name: vec![String::from("a"), String::from("b")],
+            inner: None
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_cred_ssl_unix() {
+    let yaml = concat!(
+        "ssl:\n",
+        "  subject-name:\n",
+        "    - \"a\"\n",
+        "    - \"b\"\n",
+        "  unix: path/to/nowhere.sock"
+    );
+    let expected = BasicCredConfig::SSL {
+        ssl: BasicSSLCredConfig {
+            subject_name: vec![String::from("a"), String::from("b")],
+            inner: Some(Box::new(BasicCredConfig::Unix {
+                unix: PathBuf::from("path/to/nowhere.sock")
+            }))
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_cred_ssl_ip() {
+    let yaml = concat!(
+        "ssl:\n",
+        "  subject-name:\n",
+        "    - \"a\"\n",
+        "    - \"b\"\n",
+        "  unsafe:\n",
+        "    ip: 10.10.10.10:1111"
+    );
+    let expected = BasicCredConfig::SSL {
+        ssl: BasicSSLCredConfig {
+            subject_name: vec![String::from("a"), String::from("b")],
+            inner: Some(Box::new(BasicCredConfig::Unsafe {
+                unsafe_cred: UnsafeBasicCredConfig::IP {
+                    unsafe_ip: "10.10.10.10:1111".parse().unwrap()
+                }
+            }))
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_cred_unix() {
+    let yaml = concat!("unix: path/to/nowhere.sock");
+    let expected = BasicCredConfig::Unix {
+        unix: PathBuf::from("path/to/nowhere.sock")
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_cred_ip() {
+    let yaml = concat!("unsafe:\n", "  ip: 10.10.10.10:1111");
+    let expected = BasicCredConfig::Unsafe {
+        unsafe_cred: UnsafeBasicCredConfig::IP {
+            unsafe_ip: "10.10.10.10:1111".parse().unwrap()
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_cred_socks5() {
+    let yaml = concat!("unsafe:\n", "  socks5: example.com:1111",);
+    let expected = BasicCredConfig::Unsafe {
+        unsafe_cred: UnsafeBasicCredConfig::SOCKS5 {
+            unsafe_ip: IPEndpoint::new(
+                IPEndpointAddr::Name(String::from("example.com")),
+                1111
+            )
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_authn_prin_config() {
+    let yaml = concat!(
+        "prin: test-prin\n",
+        "cred:\n",
+        "  ssl:\n",
+        "    subject-name:\n",
+        "      - \"a\"\n",
+        "      - \"b\"\n",
+        "    unsafe:\n",
+        "      ip: 10.10.10.10:1111"
+    );
+    let expected = BasicAuthNPrinConfig {
+        prin: String::from("test-prin"),
+        cred: BasicCredConfig::SSL {
+            ssl: BasicSSLCredConfig {
+                subject_name: vec![String::from("a"), String::from("b")],
+                inner: Some(Box::new(BasicCredConfig::Unsafe {
+                    unsafe_cred: UnsafeBasicCredConfig::IP {
+                        unsafe_ip: "10.10.10.10:1111".parse().unwrap()
+                    }
+                }))
+            }
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_authn_config_unsafe() {
+    let yaml = concat!(
+        "rules:\n",
+        "  - prin: test-ssl-prin\n",
+        "    cred:\n",
+        "      ssl:\n",
+        "        subject-name:\n",
+        "          - \"a\"\n",
+        "          - \"b\"\n",
+        "        unsafe:\n",
+        "          ip: 10.10.10.10:1111\n",
+        "  - prin: test-unix-prin\n",
+        "    cred:\n",
+        "      unix: path/to/nowhere.sock\n",
+        "unsafe:\n",
+        "  allow-unsafe-ip-creds: true"
+    );
+    let expected = BasicAuthNConfig {
+        rules: vec![
+            BasicAuthNPrinConfig {
+                prin: String::from("test-ssl-prin"),
+                cred: BasicCredConfig::SSL {
+                    ssl: BasicSSLCredConfig {
+                        subject_name: vec![
+                            String::from("a"),
+                            String::from("b"),
+                        ],
+                        inner: Some(Box::new(BasicCredConfig::Unsafe {
+                            unsafe_cred: UnsafeBasicCredConfig::IP {
+                                unsafe_ip: "10.10.10.10:1111".parse().unwrap()
+                            }
+                        }))
+                    }
+                }
+            },
+            BasicAuthNPrinConfig {
+                prin: String::from("test-unix-prin"),
+                cred: BasicCredConfig::Unix {
+                    unix: PathBuf::from("path/to/nowhere.sock")
+                }
+            },
+        ],
+        unsafe_opts: HostAuthNUnsafeConfig {
+            allow_unsafe_ip_creds: true
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_authn_config() {
+    let yaml = concat!(
+        "rules:\n",
+        "  - prin: test-ssl-prin\n",
+        "    cred:\n",
+        "      ssl:\n",
+        "        subject-name:\n",
+        "          - \"a\"\n",
+        "          - \"b\"\n",
+        "  - prin: test-unix-prin\n",
+        "    cred:\n",
+        "      unix: path/to/nowhere.sock\n",
+    );
+    let expected = BasicAuthNConfig {
+        rules: vec![
+            BasicAuthNPrinConfig {
+                prin: String::from("test-ssl-prin"),
+                cred: BasicCredConfig::SSL {
+                    ssl: BasicSSLCredConfig {
+                        subject_name: vec![
+                            String::from("a"),
+                            String::from("b"),
+                        ],
+                        inner: None
+                    }
+                }
+            },
+            BasicAuthNPrinConfig {
+                prin: String::from("test-unix-prin"),
+                cred: BasicCredConfig::Unix {
+                    unix: PathBuf::from("path/to/nowhere.sock")
+                }
+            },
+        ],
+        unsafe_opts: HostAuthNUnsafeConfig {
+            allow_unsafe_ip_creds: false
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
 }

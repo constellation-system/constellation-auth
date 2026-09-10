@@ -24,18 +24,22 @@ use std::fmt::Display;
 use std::fmt::Error;
 use std::fmt::Formatter;
 use std::hash::Hash;
+use std::io::IoSlice;
+use std::io::IoSliceMut;
 use std::io::Read;
 use std::io::Write;
 use std::marker::PhantomData;
 
 use constellation_common::codec::Decoder;
 use constellation_common::config::Create;
+use constellation_common::config::CreateWithParam;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::RecoverableError;
 use constellation_common::error::ScopedError;
 use constellation_common::net::Negotiator;
 use constellation_common::net::NegotiatorResult;
 use constellation_common::net::NegotiatorStart;
+use constellation_common::net::Session;
 use log::trace;
 
 use crate::cred::Credentials;
@@ -56,24 +60,32 @@ pub mod test;
 ///
 /// * `Prin`: Type of prinicpals.
 /// * `T`: Type of authenticated objects.
-pub trait AuthNed<Prin, T> {
+pub trait AuthNed<Prin> {
     /// Get the principal for this `AuthNed` object.
     fn prin(&self) -> &Prin;
+}
 
-    /// Get a reference to the object that was authenticated.
-    fn get(&self) -> &T;
-
-    /// Get a mutable reference to the object that was authenticated.
-    fn get_mut(&mut self) -> &mut T;
-
+pub trait AuthNedDestruct<Prin, T>: AuthNed<Prin> {
     /// Deconstruct this into the payload and principal.
     fn take(self) -> (Prin, T);
 }
 
-/// Receiver for authenticated messages.
-pub trait AuthNMsgRecv<Prin, Msg, AuthNMsg>
+pub trait AuthNedMap<Prin, T, S, Other>:
+    AuthNedDestruct<Prin, T> + Sized
 where
-    AuthNMsg: AuthNed<Prin, Msg> {
+    Other: AuthNedDestruct<Prin, S> {
+    fn map<F>(
+        self,
+        f: F
+    ) -> Other
+    where
+        F: FnOnce(T) -> S;
+}
+
+/// Receiver for authenticated messages.
+pub trait AuthNMsgRecv<Prin, AuthNMsg>
+where
+    AuthNMsg: AuthNed<Prin> {
     /// Errors that can occur reporting messages.
     type RecvError: Debug + Display + ScopedError;
 
@@ -101,7 +113,7 @@ where
     /// Type of session prinicpals.
     type Prin: Clone + Debug + Display + Eq + Hash;
     /// Type of authenticated flows produced by this authenticator.
-    type AuthNSession: AuthNed<Self::Prin, Stream>;
+    type AuthNSession: AuthNed<Self::Prin>;
 
     /// Try to recover the underlying stream from a negotiation error.
     #[inline]
@@ -139,7 +151,7 @@ pub trait MsgAuthN<Msg, Wrapper> {
     /// Errors that can occur during message authentication.
     type Error: Debug + Display + ScopedError;
     /// Type of authenticated messages produced by this authenticator.
-    type AuthNMsg: AuthNed<Self::Prin, Msg>;
+    type AuthNMsg: AuthNedDestruct<Self::Prin, Msg>;
 
     /// Authenticate a message.
     ///
@@ -307,27 +319,142 @@ impl<Prin, T> BasicAuthNed<Prin, T> {
             content: content
         }
     }
-}
-
-impl<Prin, T> AuthNed<Prin, T> for BasicAuthNed<Prin, T> {
-    #[inline]
-    fn prin(&self) -> &Prin {
-        &self.prin
-    }
 
     #[inline]
-    fn get(&self) -> &T {
+    pub fn get(&self) -> &T {
         &self.content
     }
 
     #[inline]
-    fn get_mut(&mut self) -> &mut T {
+    pub fn get_mut(&mut self) -> &mut T {
         &mut self.content
     }
+}
 
+impl<Prin, T> AuthNed<Prin> for BasicAuthNed<Prin, T> {
+    #[inline]
+    fn prin(&self) -> &Prin {
+        &self.prin
+    }
+}
+
+impl<Prin, T> AuthNedDestruct<Prin, T> for BasicAuthNed<Prin, T> {
     #[inline]
     fn take(self) -> (Prin, T) {
         (self.prin, self.content)
+    }
+}
+
+impl<Prin, T, S> AuthNedMap<Prin, T, S, BasicAuthNed<Prin, S>>
+    for BasicAuthNed<Prin, T>
+{
+    fn map<F>(
+        self,
+        f: F
+    ) -> BasicAuthNed<Prin, S>
+    where
+        F: FnOnce(T) -> S {
+        let BasicAuthNed { prin, content } = self;
+        let content = f(content);
+
+        BasicAuthNed { prin, content }
+    }
+}
+
+impl<Prin, T> Session for BasicAuthNed<Prin, T>
+where
+    T: Session
+{
+    type LocalAddr = T::LocalAddr;
+    type PeerAddr = T::PeerAddr;
+
+    #[inline]
+    fn peer_addr(&self) -> Result<Self::PeerAddr, std::io::Error> {
+        self.content.peer_addr()
+    }
+
+    #[inline]
+    fn local_addr(&self) -> Result<Self::LocalAddr, std::io::Error> {
+        self.content.local_addr()
+    }
+}
+
+impl<Prin, T> Read for BasicAuthNed<Prin, T>
+where
+    T: Read
+{
+    #[inline]
+    fn read(
+        &mut self,
+        buf: &mut [u8]
+    ) -> Result<usize, std::io::Error> {
+        self.content.read(buf)
+    }
+
+    #[inline]
+    fn read_vectored(
+        &mut self,
+        buf: &mut [IoSliceMut<'_>]
+    ) -> Result<usize, std::io::Error> {
+        self.content.read_vectored(buf)
+    }
+
+    #[inline]
+    fn read_to_end(
+        &mut self,
+        buf: &mut Vec<u8>
+    ) -> Result<usize, std::io::Error> {
+        self.content.read_to_end(buf)
+    }
+
+    #[inline]
+    fn read_to_string(
+        &mut self,
+        buf: &mut String
+    ) -> Result<usize, std::io::Error> {
+        self.content.read_to_string(buf)
+    }
+
+    #[inline]
+    fn read_exact(
+        &mut self,
+        buf: &mut [u8]
+    ) -> Result<(), std::io::Error> {
+        self.content.read_exact(buf)
+    }
+}
+
+impl<Prin, T> Write for BasicAuthNed<Prin, T>
+where
+    T: Write
+{
+    #[inline]
+    fn write(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<usize, std::io::Error> {
+        self.content.write(buf)
+    }
+
+    #[inline]
+    fn flush(&mut self) -> Result<(), std::io::Error> {
+        self.content.flush()
+    }
+
+    #[inline]
+    fn write_vectored(
+        &mut self,
+        buf: &[IoSlice<'_>]
+    ) -> Result<usize, std::io::Error> {
+        self.content.write_vectored(buf)
+    }
+
+    #[inline]
+    fn write_all(
+        &mut self,
+        buf: &[u8]
+    ) -> Result<(), std::io::Error> {
+        self.content.write_all(buf)
     }
 }
 
@@ -341,7 +468,7 @@ unsafe impl<Cred, Stream> Sync for TrivialAuthN<Cred, Stream> where
 {
 }
 
-impl<Cred, Stream> Create for TrivialAuthN<Cred, Stream>
+impl<Cred, Stream, Ctx> CreateWithParam<Ctx> for TrivialAuthN<Cred, Stream>
 where
     Cred: Clone + Eq + Hash
 {
@@ -349,7 +476,10 @@ where
     type CreateError = Infallible;
 
     #[inline]
-    fn create(_config: Self::Config) -> Result<Self, Self::CreateError> {
+    fn create(
+        _config: Self::Config,
+        _param: Ctx
+    ) -> Result<Self, Self::CreateError> {
         Ok(TrivialAuthN::default())
     }
 }
@@ -673,6 +803,3 @@ where
         }
     }
 }
-
-#[test]
-fn token() {}

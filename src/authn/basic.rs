@@ -26,16 +26,16 @@ use std::fmt::Formatter;
 use std::hash::Hash;
 use std::io::Read;
 use std::io::Write;
-use std::net::SocketAddr;
 use std::string::FromUtf8Error;
 
 use constellation_common::config::CreateWithParam;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
+use constellation_common::net::IPEndpoint;
 use constellation_common::net::Negotiator;
 use constellation_common::net::NegotiatorResult;
 use constellation_common::net::NegotiatorStart;
-use constellation_common::unix::UnixSocketAddr;
+use constellation_common::unix::UnixSocketPath;
 use log::debug;
 use log::error;
 use log::info;
@@ -55,10 +55,10 @@ use crate::cred::SSLCred;
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum BasicCred {
     IP {
-        unsafe_addr: SocketAddr
+        unsafe_addr: IPEndpoint
     },
     Unix {
-        addr: UnixSocketAddr
+        addr: UnixSocketPath
     },
     SSL {
         subject_name: Vec<String>,
@@ -80,11 +80,17 @@ where
 pub struct BasicAuthN<Prin>
 where
     Prin: Clone + Debug + Display + Eq + Hash {
-    unsafe_ip: Option<HashMap<SocketAddr, Prin>>,
-    unix: Option<HashMap<UnixSocketAddr, Prin>>,
+    unsafe_ip: Option<HashMap<IPEndpoint, Prin>>,
+    unix: Option<HashMap<UnixSocketPath, Prin>>,
     ssl: Option<HashMap<Vec<String>, BasicCredMatcherSSLEntry<Prin>>>,
     #[cfg(feature = "gssapi")]
     gssapi: Option<HashMap<String, Prin>>
+}
+
+#[derive(Debug)]
+pub enum BasicCredFromSSLError<Inner> {
+    Inner { err: Inner },
+    SSL { err: openssl::ssl::Error }
 }
 
 #[cfg(feature = "gssapi")]
@@ -100,10 +106,10 @@ pub enum BasicAuthNCreateError {
         err: std::io::Error
     },
     DuplicateIP {
-        addr: SocketAddr
+        addr: IPEndpoint
     },
     DuplicateUnix {
-        addr: UnixSocketAddr
+        addr: UnixSocketPath
     },
     DuplicateSSL {
         subject_name: Vec<String>
@@ -247,6 +253,8 @@ where
             BasicCredConfig::Unsafe {
                 unsafe_cred: UnsafeBasicCredConfig::IP { unsafe_ip }
             } => {
+                let unsafe_ip = IPEndpoint::from(unsafe_ip);
+
                 if allow_unsafe_opts {
                     warn!(target: "basic-authn-matcher",
                       "unsafe IP address credential for principal {} (this \
@@ -255,7 +263,43 @@ where
 
                     match &mut self.unsafe_ip {
                         Some(map) => {
+                            if map.insert(unsafe_ip.clone(), prin).is_some() {
+                                return Err(
+                                    BasicAuthNCreateError::DuplicateIP {
+                                        addr: unsafe_ip
+                                    }
+                                );
+                            }
+                        }
+                        None => {
+                            let mut map = HashMap::with_capacity(size_hint);
+
                             if map.insert(unsafe_ip, prin).is_some() {
+                                error!(target: "basic-authn-matcher",
+                                   "HashMap should not contain any entries")
+                            }
+
+                            self.unsafe_ip = Some(map);
+                        }
+                    }
+                } else {
+                    info!(target: "basic-authn-matcher",
+                      "ignorinng unsafe IP address credential because unsafe \
+                       features have not been enabled")
+                }
+            }
+            BasicCredConfig::Unsafe {
+                unsafe_cred: UnsafeBasicCredConfig::SOCKS5 { unsafe_ip }
+            } => {
+                if allow_unsafe_opts {
+                    warn!(target: "basic-authn-matcher",
+                      "unsafe IP address credential for principal {} (this \
+                       allows for trivial spoofing of channel credentials)",
+                      prin);
+
+                    match &mut self.unsafe_ip {
+                        Some(map) => {
+                            if map.insert(unsafe_ip.clone(), prin).is_some() {
                                 return Err(
                                     BasicAuthNCreateError::DuplicateIP {
                                         addr: unsafe_ip
@@ -281,8 +325,7 @@ where
                 }
             }
             BasicCredConfig::Unix { unix } => {
-                let addr = UnixSocketAddr::try_from(unix)
-                    .map_err(|err| BasicAuthNCreateError::Cred { err: err })?;
+                let addr = UnixSocketPath::from(unix);
 
                 match &mut self.unix {
                     Some(map) => {
@@ -559,13 +602,17 @@ impl TryFrom<GSSAPICred> for BasicCred {
 
 impl<Cred> TryFrom<SSLCred<Cred>> for BasicCred
 where
-    BasicCred: From<Cred>
+    BasicCred: TryFrom<Cred>
 {
-    type Error = openssl::ssl::Error;
+    type Error = BasicCredFromSSLError<<BasicCred as TryFrom<Cred>>::Error>;
 
     fn try_from(val: SSLCred<Cred>) -> Result<Self, Self::Error> {
         let (inner, _, cert, _, _) = val.take();
-        let inner = inner.map(BasicCred::from).map(Box::new);
+        let inner = inner
+            .map(BasicCred::try_from)
+            .transpose()
+            .map_err(|err| BasicCredFromSSLError::Inner { err: err })?
+            .map(Box::new);
         let subject_name: Result<Vec<String>, openssl::ssl::Error> = cert
             .subject_name()
             .entries()
@@ -573,11 +620,25 @@ where
                 ent.data().to_string().map_err(openssl::ssl::Error::from)
             })
             .collect();
+        let subject_name = subject_name
+            .map_err(|err| BasicCredFromSSLError::SSL { err: err })?;
 
         Ok(BasicCred::SSL {
-            subject_name: subject_name?,
+            subject_name: subject_name,
             inner: inner
         })
+    }
+}
+
+impl<Inner> ScopedError for BasicCredFromSSLError<Inner>
+where
+    Inner: ScopedError
+{
+    fn scope(&self) -> ErrorScope {
+        match self {
+            BasicCredFromSSLError::Inner { err } => err.scope(),
+            BasicCredFromSSLError::SSL { .. } => ErrorScope::Unrecoverable
+        }
     }
 }
 
@@ -618,6 +679,21 @@ where
         match self {
             BasicAuthNError::Cred { err } => err.fmt(f),
             BasicAuthNError::Into { err } => err.fmt(f)
+        }
+    }
+}
+
+impl<Inner> Display for BasicCredFromSSLError<Inner>
+where
+    Inner: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), std::fmt::Error> {
+        match self {
+            BasicCredFromSSLError::Inner { err } => err.fmt(f),
+            BasicCredFromSSLError::SSL { err } => write!(f, "{}", err)
         }
     }
 }
