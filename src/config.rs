@@ -111,7 +111,7 @@ pub struct BasicAuthNPrinConfig<Prin, Cred> {
 #[serde(rename = "basic-authn-unsafe-config")]
 #[serde(rename_all = "kebab-case")]
 pub struct HostAuthNUnsafeConfig {
-    allow_unsafe_ip_creds: bool
+    allow_ip_addr_creds: bool
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -130,7 +130,7 @@ impl Default for HostAuthNUnsafeConfig {
     #[inline]
     fn default() -> Self {
         HostAuthNUnsafeConfig {
-            allow_unsafe_ip_creds: false
+            allow_ip_addr_creds: false
         }
     }
 }
@@ -271,8 +271,8 @@ impl<Prin> BasicAuthNConfig<Prin> {
 
 impl HostAuthNUnsafeConfig {
     #[inline]
-    pub fn allow_unsafe_ip_creds(&self) -> bool {
-        self.allow_unsafe_ip_creds
+    pub fn allow_ip_addr_creds(&self) -> bool {
+        self.allow_ip_addr_creds
     }
 }
 
@@ -431,7 +431,7 @@ fn test_deserialize_basic_authn_config_unsafe() {
         "    cred:\n",
         "      unix: path/to/nowhere.sock\n",
         "unsafe:\n",
-        "  allow-unsafe-ip-creds: true"
+        "  allow-ip-addr-creds: true"
     );
     let expected = BasicAuthNConfig {
         rules: vec![
@@ -459,7 +459,7 @@ fn test_deserialize_basic_authn_config_unsafe() {
             },
         ],
         unsafe_opts: HostAuthNUnsafeConfig {
-            allow_unsafe_ip_creds: true
+            allow_ip_addr_creds: true
         }
     };
     let actual = yaml_serde::from_str(yaml).unwrap();
@@ -503,7 +503,7 @@ fn test_deserialize_basic_authn_config() {
             },
         ],
         unsafe_opts: HostAuthNUnsafeConfig {
-            allow_unsafe_ip_creds: false
+            allow_ip_addr_creds: false
         }
     };
     let actual = yaml_serde::from_str(yaml).unwrap();

@@ -38,7 +38,6 @@ use constellation_common::net::NegotiatorStart;
 use constellation_common::unix::UnixSocketPath;
 use log::debug;
 use log::error;
-use log::info;
 use log::warn;
 
 use crate::authn::AuthNResult;
@@ -283,8 +282,8 @@ where
                         }
                     }
                 } else {
-                    info!(target: "basic-authn-matcher",
-                      "ignorinng unsafe IP address credential because unsafe \
+                    warn!(target: "basic-authn-matcher",
+                      "ignoring unsafe IP address credential because unsafe \
                        features have not been enabled")
                 }
             }
@@ -319,8 +318,8 @@ where
                         }
                     }
                 } else {
-                    info!(target: "basic-authn-matcher",
-                      "ignorinng unsafe IP address credential because unsafe \
+                    warn!(target: "basic-authn-matcher",
+                      "ignoring unsafe IP address credential because unsafe \
                        features have not been enabled")
                 }
             }
@@ -456,7 +455,7 @@ where
         allow_unsafe_opts: bool
     ) -> Result<Self, Self::CreateError> {
         let (rules, unsafe_opts) = config.take();
-        let allow_unsafe_creds = if unsafe_opts.allow_unsafe_ip_creds() {
+        let allow_unsafe_creds = if unsafe_opts.allow_ip_addr_creds() {
             if allow_unsafe_opts {
                 warn!(target: "basic-authn",
                       "unsafe option allow-ip-addr-creds enabled for basic \
@@ -465,7 +464,7 @@ where
 
                 true
             } else {
-                info!(target: "basic-authn",
+                warn!(target: "basic-authn",
                       "ignoring unsafe configuration option \
                        allow-ip-addr-creds because unsafe features have not \
                        been enabled");
@@ -554,20 +553,33 @@ where
         stream: Flow
     ) -> Result<AuthNResult<BasicAuthNed<Prin, Flow>, Flow>, Self::StartError>
     {
-        match stream
+        if let Some(creds) = stream
             .creds()
             .map_err(|err| BasicAuthNError::Cred { err: err })?
-            .map(|cred| cred.try_into())
-            .transpose()
-            .map_err(|err| BasicAuthNError::Into { err: err })?
-            .and_then(|cred| self.match_cred(&cred))
         {
-            Some(prin) => {
-                let authned = BasicAuthNed::new(prin.clone(), stream);
+            debug!(target: "basic-authn",
+                   "starting authentication");
 
-                Ok(AuthNResult::Accept(authned))
+            let creds = creds
+                .try_into()
+                .map_err(|err| BasicAuthNError::Into { err: err })?;
+
+            debug!(target: "basic-authn",
+                   "reduced credentials: {}", creds);
+
+            match self.match_cred(&creds) {
+                Some(prin) => {
+                    let authned = BasicAuthNed::new(prin.clone(), stream);
+
+                    Ok(AuthNResult::Accept(authned))
+                }
+                None => Ok(AuthNResult::Reject(stream))
             }
-            None => Ok(AuthNResult::Reject(stream))
+        } else {
+            debug!(target: "basic-authn",
+                   "authentication with no credentials");
+
+            Ok(AuthNResult::Reject(stream))
         }
     }
 }

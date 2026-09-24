@@ -29,6 +29,8 @@ use std::io::IoSliceMut;
 use std::io::Read;
 use std::io::Write;
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use constellation_common::codec::Decoder;
 use constellation_common::config::Create;
@@ -36,6 +38,7 @@ use constellation_common::config::CreateWithParam;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::RecoverableError;
 use constellation_common::error::ScopedError;
+use constellation_common::error::WithMutexPoison;
 use constellation_common::net::Negotiator;
 use constellation_common::net::NegotiatorResult;
 use constellation_common::net::NegotiatorStart;
@@ -280,6 +283,24 @@ pub struct TrivialAuthN<Cred: Clone + Eq + Hash, Stream> {
 pub struct BasicAuthNed<Prin, T> {
     prin: Prin,
     content: T
+}
+
+impl<Prin, AuthNMsg, T> AuthNMsgRecv<Prin, AuthNMsg> for Arc<Mutex<T>>
+where
+    T: AuthNMsgRecv<Prin, AuthNMsg>,
+    AuthNMsg: AuthNed<Prin>
+{
+    type RecvError = WithMutexPoison<T::RecvError>;
+
+    fn recv_auth_msg(
+        &mut self,
+        msg: AuthNMsg
+    ) -> Result<(), Self::RecvError> {
+        self.lock()
+            .map_err(|_| WithMutexPoison::MutexPoison)?
+            .recv_auth_msg(msg)
+            .map_err(|err| WithMutexPoison::Inner { err: err })
+    }
 }
 
 impl<Accept, Reject> AuthNResult<Accept, Reject> {
