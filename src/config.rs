@@ -16,10 +16,15 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
-use std::net::SocketAddr;
+use std::convert::TryFrom;
+use std::fmt::Display;
+use std::fmt::Error;
+use std::fmt::Formatter;
+use std::net::IpAddr;
 use std::path::PathBuf;
+use std::str::FromStr;
 
-use constellation_common::net::IPEndpoint;
+use constellation_common::net::IPEndpointAddr;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -62,16 +67,29 @@ pub enum BasicCredConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename = "unsafe-basic-ip-matcher")]
+#[serde(rename_all = "kebab-case")]
+#[serde(try_from = "String")]
+#[serde(into = "String")]
+pub struct BasicIPMatcherConfig<Addr>
+where
+    Addr: Clone + Display + FromStr,
+    Addr::Err: Display {
+    port: Option<u16>,
+    addr: Addr
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename = "unsafe-basic-cred")]
 #[serde(untagged)]
 pub enum UnsafeBasicCredConfig {
     IP {
         #[serde(rename = "ip")]
-        unsafe_ip: SocketAddr
+        unsafe_ip: BasicIPMatcherConfig<IpAddr>
     },
     SOCKS5 {
         #[serde(rename = "socks5")]
-        unsafe_ip: IPEndpoint
+        unsafe_ip: BasicIPMatcherConfig<IPEndpointAddr>
     }
 }
 
@@ -125,6 +143,116 @@ pub struct BasicAuthNConfig<Prin> {
 }
 
 pub type TestAuthNConfig<Prin, Cred> = Vec<TestAuthNPrinConfig<Prin, Cred>>;
+
+#[derive(Debug)]
+pub enum BadIPMatcher<Addr> {
+    Addr { err: Addr },
+    BadFormat { err: String }
+}
+
+impl<Addr> BasicIPMatcherConfig<Addr>
+where
+    Addr: Clone + Display + FromStr,
+    Addr::Err: Display
+{
+    #[inline]
+    pub fn take(self) -> (Addr, Option<u16>) {
+        (self.addr, self.port)
+    }
+}
+
+impl<Addr> From<BasicIPMatcherConfig<Addr>> for String
+where
+    Addr: Clone + Display + FromStr,
+    Addr::Err: Display
+{
+    fn from(val: BasicIPMatcherConfig<Addr>) -> String {
+        format!("{}", val)
+    }
+}
+
+impl<Addr> TryFrom<&'_ str> for BasicIPMatcherConfig<Addr>
+where
+    Addr: Clone + Display + FromStr,
+    Addr::Err: Display
+{
+    type Error = BadIPMatcher<Addr::Err>;
+
+    #[inline]
+    fn try_from(str: &str) -> Result<Self, BadIPMatcher<Addr::Err>> {
+        str.parse()
+    }
+}
+
+impl<Addr> TryFrom<String> for BasicIPMatcherConfig<Addr>
+where
+    Addr: Clone + Display + FromStr,
+    Addr::Err: Display
+{
+    type Error = BadIPMatcher<Addr::Err>;
+
+    #[inline]
+    fn try_from(str: String) -> Result<Self, BadIPMatcher<Addr::Err>> {
+        str.parse()
+    }
+}
+
+impl<Addr> FromStr for BasicIPMatcherConfig<Addr>
+where
+    Addr: Clone + Display + FromStr,
+    Addr::Err: Display
+{
+    type Err = BadIPMatcher<Addr::Err>;
+
+    fn from_str(str: &str) -> Result<Self, BadIPMatcher<Addr::Err>> {
+        match str.strip_suffix(":*") {
+            Some(val) => {
+                let val = match val.strip_prefix('[') {
+                    Some(val) => val.strip_suffix(']').ok_or(
+                        BadIPMatcher::BadFormat {
+                            err: str.to_string()
+                        }
+                    )?,
+                    None => val
+                };
+                let addr = val
+                    .parse()
+                    .map_err(|err| BadIPMatcher::Addr { err: err })?;
+
+                Ok(BasicIPMatcherConfig {
+                    port: None,
+                    addr: addr
+                })
+            }
+            None => {
+                let (addr, port) = match str.strip_prefix('[') {
+                    Some(val) => {
+                        val.split_once("]:").ok_or(BadIPMatcher::BadFormat {
+                            err: str.to_string()
+                        })?
+                    }
+                    None => {
+                        str.rsplit_once(':').ok_or(BadIPMatcher::BadFormat {
+                            err: str.to_string()
+                        })?
+                    }
+                };
+                let addr = addr
+                    .parse()
+                    .map_err(|err| BadIPMatcher::Addr { err: err })?;
+                let port =
+                    port.parse().map_err(|_| BadIPMatcher::BadFormat {
+                        err: str.to_string()
+                    })?;
+
+                Ok(BasicIPMatcherConfig {
+                    port: Some(port),
+                    addr: addr
+                })
+            }
+        }
+    }
+}
 
 impl Default for HostAuthNUnsafeConfig {
     #[inline]
@@ -276,8 +404,38 @@ impl HostAuthNUnsafeConfig {
     }
 }
 
-#[cfg(test)]
-use constellation_common::net::IPEndpointAddr;
+impl<Addr> Display for BasicIPMatcherConfig<Addr>
+where
+    Addr: Clone + Display + FromStr,
+    Addr::Err: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self.port {
+            Some(port) => write!(f, "{}:{}", self.addr, port),
+            None => write!(f, "{}:*", self.addr)
+        }
+    }
+}
+
+impl<Addr> Display for BadIPMatcher<Addr>
+where
+    Addr: Display
+{
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>
+    ) -> Result<(), Error> {
+        match self {
+            BadIPMatcher::Addr { err } => err.fmt(f),
+            BadIPMatcher::BadFormat { err } => {
+                write!(f, "bad IP match specification \"{}\"", err)
+            }
+        }
+    }
+}
 
 #[test]
 fn test_deserialize_basic_cred_ssl_flat() {
@@ -335,7 +493,10 @@ fn test_deserialize_basic_cred_ssl_ip() {
             subject_name: vec![String::from("a"), String::from("b")],
             inner: Some(Box::new(BasicCredConfig::Unsafe {
                 unsafe_cred: UnsafeBasicCredConfig::IP {
-                    unsafe_ip: "10.10.10.10:1111".parse().unwrap()
+                    unsafe_ip: BasicIPMatcherConfig {
+                        port: Some(1111),
+                        addr: "10.10.10.10".parse().unwrap()
+                    }
                 }
             }))
         }
@@ -357,11 +518,110 @@ fn test_deserialize_basic_cred_unix() {
 }
 
 #[test]
+fn test_deserialize_matcher_ip4() {
+    let actual = BasicIPMatcherConfig::<IpAddr>::try_from("10.10.10.10:1111")
+        .expect("Expected success");
+    let expected = BasicIPMatcherConfig {
+        port: Some(1111),
+        addr: "10.10.10.10".parse().unwrap()
+    };
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_matcher_ip4_no_port() {
+    let actual = BasicIPMatcherConfig::<IpAddr>::try_from("10.10.10.10:*")
+        .expect("Expected success");
+    let expected = BasicIPMatcherConfig {
+        port: None,
+        addr: "10.10.10.10".parse().unwrap()
+    };
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_matcher_ip6() {
+    let actual = BasicIPMatcherConfig::<IpAddr>::try_from(
+        "1234:5678:90ab:cdef:1234:5678:90ab:cdef:1111"
+    )
+    .expect("Expected success");
+    let expected = BasicIPMatcherConfig {
+        port: Some(1111),
+        addr: "1234:5678:90ab:cdef:1234:5678:90ab:cdef".parse().unwrap()
+    };
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_matcher_ip6_no_port() {
+    let actual = BasicIPMatcherConfig::<IpAddr>::try_from(
+        "1234:5678:90ab:cdef:1234:5678:90ab:cdef:*"
+    )
+    .expect("Expected success");
+    let expected = BasicIPMatcherConfig {
+        port: None,
+        addr: "1234:5678:90ab:cdef:1234:5678:90ab:cdef".parse().unwrap()
+    };
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_matcher_ip6_brackets() {
+    let actual = BasicIPMatcherConfig::<IpAddr>::try_from(
+        "[1234:5678:90ab:cdef:1234:5678:90ab:cdef]:1111"
+    )
+    .expect("Expected success");
+    let expected = BasicIPMatcherConfig {
+        port: Some(1111),
+        addr: "1234:5678:90ab:cdef:1234:5678:90ab:cdef".parse().unwrap()
+    };
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_matcher_ip6_brackets_no_port() {
+    let actual = BasicIPMatcherConfig::<IpAddr>::try_from(
+        "[1234:5678:90ab:cdef:1234:5678:90ab:cdef]:*"
+    )
+    .expect("Expected success");
+    let expected = BasicIPMatcherConfig {
+        port: None,
+        addr: "1234:5678:90ab:cdef:1234:5678:90ab:cdef".parse().unwrap()
+    };
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
 fn test_deserialize_basic_cred_ip() {
     let yaml = concat!("unsafe:\n", "  ip: 10.10.10.10:1111");
     let expected = BasicCredConfig::Unsafe {
         unsafe_cred: UnsafeBasicCredConfig::IP {
-            unsafe_ip: "10.10.10.10:1111".parse().unwrap()
+            unsafe_ip: BasicIPMatcherConfig {
+                port: Some(1111),
+                addr: "10.10.10.10".parse().unwrap()
+            }
+        }
+    };
+    let actual = yaml_serde::from_str(yaml).unwrap();
+
+    assert_eq!(expected, actual)
+}
+
+#[test]
+fn test_deserialize_basic_cred_ip_no_port() {
+    let yaml = concat!("unsafe:\n", "  ip: 10.10.10.10:*");
+    let expected = BasicCredConfig::Unsafe {
+        unsafe_cred: UnsafeBasicCredConfig::IP {
+            unsafe_ip: BasicIPMatcherConfig {
+                port: None,
+                addr: "10.10.10.10".parse().unwrap()
+            }
         }
     };
     let actual = yaml_serde::from_str(yaml).unwrap();
@@ -374,10 +634,10 @@ fn test_deserialize_basic_cred_socks5() {
     let yaml = concat!("unsafe:\n", "  socks5: example.com:1111",);
     let expected = BasicCredConfig::Unsafe {
         unsafe_cred: UnsafeBasicCredConfig::SOCKS5 {
-            unsafe_ip: IPEndpoint::new(
-                IPEndpointAddr::Name(String::from("example.com")),
-                1111
-            )
+            unsafe_ip: BasicIPMatcherConfig {
+                port: Some(1111),
+                addr: IPEndpointAddr::Name(String::from("example.com"))
+            }
         }
     };
     let actual = yaml_serde::from_str(yaml).unwrap();
@@ -404,7 +664,10 @@ fn test_deserialize_basic_authn_prin_config() {
                 subject_name: vec![String::from("a"), String::from("b")],
                 inner: Some(Box::new(BasicCredConfig::Unsafe {
                     unsafe_cred: UnsafeBasicCredConfig::IP {
-                        unsafe_ip: "10.10.10.10:1111".parse().unwrap()
+                        unsafe_ip: BasicIPMatcherConfig {
+                            port: Some(1111),
+                            addr: "10.10.10.10".parse().unwrap()
+                        }
                     }
                 }))
             }
@@ -445,7 +708,10 @@ fn test_deserialize_basic_authn_config_unsafe() {
                         ],
                         inner: Some(Box::new(BasicCredConfig::Unsafe {
                             unsafe_cred: UnsafeBasicCredConfig::IP {
-                                unsafe_ip: "10.10.10.10:1111".parse().unwrap()
+                                unsafe_ip: BasicIPMatcherConfig {
+                                    port: Some(1111),
+                                    addr: "10.10.10.10".parse().unwrap()
+                                }
                             }
                         }))
                     }

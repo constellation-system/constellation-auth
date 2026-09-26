@@ -32,6 +32,7 @@ use constellation_common::config::CreateWithParam;
 use constellation_common::error::ErrorScope;
 use constellation_common::error::ScopedError;
 use constellation_common::net::IPEndpoint;
+use constellation_common::net::IPEndpointAddr;
 use constellation_common::net::Negotiator;
 use constellation_common::net::NegotiatorResult;
 use constellation_common::net::NegotiatorStart;
@@ -69,6 +70,11 @@ pub enum BasicCred {
     }
 }
 
+struct BasicIPMatcher<Prin> {
+    port: Option<u16>,
+    prin: Prin
+}
+
 enum BasicCredMatcherSSLEntry<Prin>
 where
     Prin: Clone + Debug + Display + Eq + Hash {
@@ -79,7 +85,7 @@ where
 pub struct BasicAuthN<Prin>
 where
     Prin: Clone + Debug + Display + Eq + Hash {
-    unsafe_ip: Option<HashMap<IPEndpoint, Prin>>,
+    unsafe_ip: Option<HashMap<IPEndpointAddr, BasicIPMatcher<Prin>>>,
     unix: Option<HashMap<UnixSocketPath, Prin>>,
     ssl: Option<HashMap<Vec<String>, BasicCredMatcherSSLEntry<Prin>>>,
     #[cfg(feature = "gssapi")]
@@ -105,7 +111,7 @@ pub enum BasicAuthNCreateError {
         err: std::io::Error
     },
     DuplicateIP {
-        addr: IPEndpoint
+        addr: IPEndpointAddr
     },
     DuplicateUnix {
         addr: UnixSocketPath
@@ -154,21 +160,28 @@ where
             // here.
             BasicCred::IP { unsafe_addr } => {
                 self.unsafe_ip.as_ref().and_then(|tab| {
-                    let out = tab.get(unsafe_addr);
+                    let ent = tab.get(unsafe_addr.ip_addr());
 
-                    if let Some(prin) = out {
-                        warn!(target: "basic-authn-matcher",
-                              "authenticating principal {} with unsafe IP \
-                               address credential {} (this allows for trivial \
-                               spoofing of channel credentials)",
-                              prin, unsafe_addr);
-                    } else {
-                        debug!(target: "basic-authn-matcher",
-                               "failed to match IP address {}",
-                               unsafe_addr);
-                    }
+                    ent.and_then(|ent| {
+                        if ent
+                            .port
+                            .is_none_or(|port| port == unsafe_addr.port())
+                        {
+                            warn!(target: "basic-authn-matcher",
+                                  "authenticating principal {} with unsafe IP \
+                                   address credential {} (this allows for \
+                                   trivial spoofing of channel credentials)",
+                                  ent.prin, unsafe_addr);
 
-                    out
+                            Some(&ent.prin)
+                        } else {
+                            debug!(target: "basic-authn-matcher",
+                                   "failed to match IP address {}",
+                                   unsafe_addr);
+
+                            None
+                        }
+                    })
                 })
             }
             BasicCred::Unix { addr } => self.unix.as_ref().and_then(|tab| {
@@ -252,7 +265,8 @@ where
             BasicCredConfig::Unsafe {
                 unsafe_cred: UnsafeBasicCredConfig::IP { unsafe_ip }
             } => {
-                let unsafe_ip = IPEndpoint::from(unsafe_ip);
+                let (unsafe_ip, port) = unsafe_ip.take();
+                let unsafe_ip = IPEndpointAddr::from(unsafe_ip);
 
                 if allow_unsafe_opts {
                     warn!(target: "basic-authn-matcher",
@@ -260,9 +274,15 @@ where
                        allows for trivial spoofing of channel credentials)",
                       prin);
 
+                    let matcher = BasicIPMatcher {
+                        prin: prin,
+                        port: port
+                    };
+
                     match &mut self.unsafe_ip {
                         Some(map) => {
-                            if map.insert(unsafe_ip.clone(), prin).is_some() {
+                            if map.insert(unsafe_ip.clone(), matcher).is_some()
+                            {
                                 return Err(
                                     BasicAuthNCreateError::DuplicateIP {
                                         addr: unsafe_ip
@@ -273,7 +293,7 @@ where
                         None => {
                             let mut map = HashMap::with_capacity(size_hint);
 
-                            if map.insert(unsafe_ip, prin).is_some() {
+                            if map.insert(unsafe_ip, matcher).is_some() {
                                 error!(target: "basic-authn-matcher",
                                    "HashMap should not contain any entries")
                             }
@@ -290,15 +310,23 @@ where
             BasicCredConfig::Unsafe {
                 unsafe_cred: UnsafeBasicCredConfig::SOCKS5 { unsafe_ip }
             } => {
+                let (unsafe_ip, port) = unsafe_ip.take();
+
                 if allow_unsafe_opts {
                     warn!(target: "basic-authn-matcher",
                       "unsafe IP address credential for principal {} (this \
                        allows for trivial spoofing of channel credentials)",
                       prin);
 
+                    let matcher = BasicIPMatcher {
+                        prin: prin,
+                        port: port
+                    };
+
                     match &mut self.unsafe_ip {
                         Some(map) => {
-                            if map.insert(unsafe_ip.clone(), prin).is_some() {
+                            if map.insert(unsafe_ip.clone(), matcher).is_some()
+                            {
                                 return Err(
                                     BasicAuthNCreateError::DuplicateIP {
                                         addr: unsafe_ip
@@ -309,7 +337,7 @@ where
                         None => {
                             let mut map = HashMap::with_capacity(size_hint);
 
-                            if map.insert(unsafe_ip, prin).is_some() {
+                            if map.insert(unsafe_ip, matcher).is_some() {
                                 error!(target: "basic-authn-matcher",
                                    "HashMap should not contain any entries")
                             }
@@ -557,15 +585,12 @@ where
             .creds()
             .map_err(|err| BasicAuthNError::Cred { err: err })?
         {
-            debug!(target: "basic-authn",
-                   "starting authentication");
-
             let creds = creds
                 .try_into()
                 .map_err(|err| BasicAuthNError::Into { err: err })?;
 
             debug!(target: "basic-authn",
-                   "reduced credentials: {}", creds);
+                   "authenticating with credentials: {}", creds);
 
             match self.match_cred(&creds) {
                 Some(prin) => {
