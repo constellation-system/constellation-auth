@@ -1,4 +1,4 @@
-// Copyright © 2024-25 The Johns Hopkins Applied Physics Laboratory LLC.
+// Copyright © 2024-26 The Johns Hopkins Applied Physics Laboratory LLC.
 //
 // This program is free software: you can redistribute it and/or
 // modify it under the terms of the GNU Affero General Public License,
@@ -18,6 +18,7 @@
 
 //! Credential-harvesting functionality.
 use std::convert::Infallible;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
 #[cfg(feature = "unix")]
@@ -28,9 +29,7 @@ use std::io::Read;
 use std::io::Write;
 use std::net::TcpStream;
 #[cfg(feature = "unix")]
-use std::os::unix::net::UCred;
-#[cfg(feature = "unix")]
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::SocketAddr;
 
 #[cfg(feature = "gssapi")]
 use libgssapi::context::ClientCtx;
@@ -54,7 +53,7 @@ pub trait Credentials {
     /// Type of credentials.
     type Cred;
     /// Type of error that can occur obtaining credentials.
-    type CredError: Display;
+    type CredError: Debug + Display;
 
     /// Get credentials for this object.
     fn creds(&self) -> Result<Option<Self::Cred>, Self::CredError>;
@@ -68,7 +67,7 @@ pub trait CredentialsMut {
     /// Type of credentials.
     type Cred;
     /// Type of error that can occur obtaining credentials.
-    type CredError: Display;
+    type CredError: Debug + Display;
 
     /// Get credentials for this object.
     fn creds(&mut self) -> Result<Option<Self::Cred>, Self::CredError>;
@@ -96,12 +95,42 @@ pub struct SSLCred<S> {
     inner: Option<S>,
     session_id: Vec<u8>,
     peer_cert: X509,
-    peer_cert_chain: Option<Vec<X509>>
+    peer_cert_chain: Option<Vec<X509>>,
+    /// Security level of the TLS session.
+    seclvl: u32
 }
 
 /// Null credential, used for testing.
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NullCred;
+
+#[cfg(feature = "unix")]
+pub struct UnixSocketCred<U> {
+    local: SocketAddr,
+    peer: SocketAddr,
+    user: U
+}
+
+#[cfg(feature = "unix")]
+impl<U> UnixSocketCred<U> {
+    /// Get the local socket address.
+    #[inline]
+    pub fn local(&self) -> &SocketAddr {
+        &self.local
+    }
+
+    /// Get the peer socket address.
+    #[inline]
+    pub fn peer(&self) -> &SocketAddr {
+        &self.peer
+    }
+
+    /// Get the user information.
+    #[inline]
+    pub fn user(&self) -> &U {
+        &self.user
+    }
+}
 
 #[cfg(feature = "gssapi")]
 impl GSSAPICred {
@@ -160,6 +189,23 @@ impl<S> SSLCred<S> {
     #[inline]
     pub fn peer_cert_chain(&self) -> Option<&[X509]> {
         self.peer_cert_chain.as_deref()
+    }
+
+    /// Get the security level of the TLS session.
+    #[inline]
+    pub fn seclvl(&self) -> u32 {
+        self.seclvl
+    }
+
+    #[inline]
+    pub fn take(self) -> (Option<S>, Vec<u8>, X509, Option<Vec<X509>>, u32) {
+        (
+            self.inner,
+            self.session_id,
+            self.peer_cert,
+            self.peer_cert_chain,
+            self.seclvl
+        )
     }
 }
 
@@ -237,6 +283,7 @@ where
     fn creds(&self) -> Result<Option<Self::Cred>, S::CredError> {
         let inner = self.get_ref().creds()?;
         let ssl = self.ssl();
+        let seclvl = ssl.security_level();
 
         Ok(ssl
             .peer_certificate()
@@ -252,7 +299,8 @@ where
                     inner: inner,
                     session_id: session_id.to_vec(),
                     peer_cert: peer_cert,
-                    peer_cert_chain: chain
+                    peer_cert_chain: chain,
+                    seclvl: seclvl
                 }
             }))
     }
@@ -261,35 +309,63 @@ where
 #[cfg(feature = "openssl")]
 impl<S> CredentialsMut for SslStream<S>
 where
-    S: Credentials + Read + Write
+    S: CredentialsMut + Read + Write
 {
     type Cred = SSLCred<S::Cred>;
     type CredError = S::CredError;
 
     #[inline]
     fn creds(&mut self) -> Result<Option<Self::Cred>, S::CredError> {
-        <Self as Credentials>::creds(self)
+        let inner = self.get_mut().creds()?;
+        let ssl = self.ssl();
+        let seclvl = ssl.security_level();
+
+        Ok(ssl
+            .peer_certificate()
+            .and_then(|peer_cert| {
+                ssl.session().map(|session| (peer_cert, session.id()))
+            })
+            .map(|(peer_cert, session_id)| {
+                let chain = ssl.verified_chain().map(|stack| {
+                    stack.into_iter().map(|cert| cert.to_owned()).collect()
+                });
+
+                SSLCred {
+                    inner: inner,
+                    session_id: session_id.to_vec(),
+                    peer_cert: peer_cert,
+                    peer_cert_chain: chain,
+                    seclvl: seclvl
+                }
+            }))
     }
 }
 
 #[cfg(feature = "unix")]
-impl Credentials for UnixStream {
-    type Cred = UCred;
+impl Credentials for mio::net::UnixStream {
+    type Cred = UnixSocketCred<()>;
     type CredError = Error;
 
     #[inline]
-    fn creds(&self) -> Result<Option<UCred>, Error> {
-        self.peer_cred().map(Some)
+    fn creds(&self) -> Result<Option<Self::Cred>, Error> {
+        let local = self.local_addr()?;
+        let peer = self.peer_addr()?;
+
+        Ok(Some(UnixSocketCred {
+            local: local,
+            peer: peer,
+            user: ()
+        }))
     }
 }
 
 #[cfg(feature = "unix")]
-impl CredentialsMut for UnixStream {
-    type Cred = UCred;
+impl CredentialsMut for mio::net::UnixStream {
+    type Cred = UnixSocketCred<()>;
     type CredError = Error;
 
     #[inline]
-    fn creds(&mut self) -> Result<Option<UCred>, Error> {
+    fn creds(&mut self) -> Result<Option<Self::Cred>, Error> {
         <Self as Credentials>::creds(self)
     }
 }
