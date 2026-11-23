@@ -16,6 +16,11 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
+//! Test authenticator.
+//!
+//! *This will eventually be replaced with
+//! [`BasicAuthN`](crate::authn::basic::BasicAuthN)*
+
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;

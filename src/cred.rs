@@ -17,6 +17,11 @@
 // <https://www.gnu.org/licenses/>.
 
 //! Credential-harvesting functionality.
+//!
+//! This module provides an API for harvesting credentials from
+//! objects such as sessions and wrapped messages.  These credentials
+//! are then used for authentication/authorization purposes.
+
 use std::convert::Infallible;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -93,8 +98,11 @@ pub struct GSSAPICred {
 pub struct SSLCred<S> {
     /// Credentials from inner stream.
     inner: Option<S>,
+    /// The TLS session ID.
     session_id: Vec<u8>,
+    /// The peer certificate.
     peer_cert: X509,
+    /// The peer certificate chain.
     peer_cert_chain: Option<Vec<X509>>,
     /// Security level of the TLS session.
     seclvl: u32
@@ -104,10 +112,14 @@ pub struct SSLCred<S> {
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct NullCred;
 
+/// A credential harvested from a Unix socket.
 #[cfg(feature = "unix")]
 pub struct UnixSocketCred<U> {
+    /// The local Unix socket address.
     local: SocketAddr,
+    /// The peer's Unix socket address.
     peer: SocketAddr,
+    /// The user.
     user: U
 }
 
@@ -197,6 +209,21 @@ impl<S> SSLCred<S> {
         self.seclvl
     }
 
+    /// Decompose this `SSLCred` into its component.
+    ///
+    /// # Return Value
+    ///
+    /// A tuple having the following components:
+    ///
+    /// 1. The inner channel's credentials.
+    ///
+    /// 1. The TLS session ID.
+    ///
+    /// 1. The peer X.509 certificate.
+    ///
+    /// 1. The peer certificate chain.
+    ///
+    /// 1. The security level.
     #[inline]
     pub fn take(self) -> (Option<S>, Vec<u8>, X509, Option<Vec<X509>>, u32) {
         (

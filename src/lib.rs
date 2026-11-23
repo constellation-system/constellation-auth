@@ -17,6 +17,13 @@
 // <https://www.gnu.org/licenses/>.
 
 //! Constellation Authentication / Authorization API
+//!
+//! *This package and is incomplete and under active design and development*
+//!
+//! This package provides authentication and authorization mechanisms
+//! for Constellation.  At present, authentication is the only
+//! implemented functionality.  See the [`authn`] module for more
+//! details.
 #![allow(clippy::redundant_field_names)]
 #![allow(clippy::type_complexity)]
 

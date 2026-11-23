@@ -16,7 +16,40 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
-//! Authentication traits.
+//! Authentication functionality.
+//!
+//! This module provides traits for both session and message
+//! authentication, along with some basic implementations.
+//!
+//! # Session Authentication
+//!
+//! Session authentication is implemented through the [`SessionAuthN`]
+//! trait, which is in turn based on the [`Negotiator`] trait
+//! hierarchy.  Session authenticators have access to a raw session,
+//! and can perform a sub-protocol as part of authentication.
+//!
+//! # Message Authentication
+//!
+//! Message authentication in implemented through the [`MsgAuthN`]
+//! trait.  Message authentication must make authentication decisions
+//! based on a session principal, and on an individual message;
+//! however, it can transform the message (e.g. unwrapping a CMS
+//! envelope).
+//!
+//! # Type-Level Protection
+//!
+//! The API for authentication is designed to provide *type-level*
+//! protection against failure to authenticate sessions and messages.
+//! Both the session and message authentication trait APIs produce
+//! associated types implementing [`AuthNed`] and its sub-traits
+//! ([`SessionAuthN::AuthNSession`], and [`MsgAuthN::AuthNMsg`]).  The
+//! [`AuthNed`] trait hierarchy in turn provides no functionality for
+//! creating instances.  This means the *only* way of obtaining an
+//! instance of the associated type is through the authenticator
+//! implementation itself.
+//!
+//! Then, if consumer APIs use the aforementioned associated types,
+//! this guarantees that those objects have been authenticated.
 use std::convert::Infallible;
 use std::convert::TryInto;
 use std::fmt::Debug;
@@ -51,32 +84,73 @@ use crate::cred::NullCred;
 pub mod basic;
 pub mod test;
 
-/// Trait for authenticated objects, produced by [SessionAuthN] or
-/// [MsgAuthN] instances.
+/// Trait for authenticated objects, produced by [`SessionAuthN`] or
+/// [`MsgAuthN`] instances.
 ///
-/// There is deliberately no way to create instances of this trait;
-/// they should only be created by the authenticator, guaranteeing at
-/// the type level that these have successfully gone through
-/// authentication.
+/// This wraps an inner object type, providing a way of obtaining the
+/// principal against which it was authenticated.
+///
+/// There is deliberately no way to create instances of this trait
+/// specified by the trait itself; instances should only be created by
+/// the authenticator, guaranteeing at the *type level* that these
+/// have successfully gone through authentication.
 ///
 /// # Type Parameters
 ///
-/// * `Prin`: Type of prinicpals.
-/// * `T`: Type of authenticated objects.
+/// - `Prin`: Type of prinicpals.
 pub trait AuthNed<Prin> {
     /// Get the principal for this `AuthNed` object.
     fn prin(&self) -> &Prin;
 }
 
+/// Trait for decomposing of authenticated objects back into their
+/// components.
+///
+/// Once decomposed, an authenticated object generally *cannot* be
+/// reconstituted if only this trait and [`AuthNed`] are being used.
+/// This is generally only used for session shutdown procedures.
+///
+/// # Type Parameters
+///
+/// - `Prin`: Type of prinicpals.
+///
+/// - `T`: Type of inner objects.
 pub trait AuthNedDestruct<Prin, T>: AuthNed<Prin> {
     /// Deconstruct this into the payload and principal.
     fn take(self) -> (Prin, T);
 }
 
+/// Trait for applying a transformation to the inner type of an
+/// authenticated object.
+///
+/// This permits the inner object to be transformed without
+/// deconstructing the authenticated object (and thus having no way to
+/// reconstitute it).  There is deliberately no way to apply a
+/// transformation to the principal.
+///
+/// # Type Parameters
+///
+/// - `Prin`: Type of prinicpals.
+///
+/// - `T`: Type of inner objects.
+///
+/// - `S`: Type of transformed inner objects.
+///
+/// - `Other`: Type of transformed [`AuthNed`] instance.
 pub trait AuthNedMap<Prin, T, S, Other>:
     AuthNedDestruct<Prin, T> + Sized
 where
     Other: AuthNedDestruct<Prin, S> {
+    /// Apply a transformation to the inner object of an authenticated
+    /// object.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `F`: Type of transformation.
+    ///
+    /// # Parameters
+    ///
+    /// - `f`: The transformation to apply.
     fn map<F>(
         self,
         f: F
@@ -86,6 +160,13 @@ where
 }
 
 /// Receiver for authenticated messages.
+///
+/// # Type Parameters
+///
+/// - `Prin`: Type of principals.
+///
+/// - `AuthNMsg`: Type of authenticated messages (must be an [`AuthNed`]
+///   instance).
 pub trait AuthNMsgRecv<Prin, AuthNMsg>
 where
     AuthNMsg: AuthNed<Prin> {
@@ -93,6 +174,10 @@ where
     type RecvError: Debug + Display + ScopedError;
 
     /// Receive an authenticated message.
+    ///
+    /// # Parameters
+    ///
+    /// - `msg`: Message to be received.
     fn recv_auth_msg(
         &mut self,
         msg: AuthNMsg
@@ -108,31 +193,59 @@ where
 ///
 /// The result of successful authentication should be a session
 /// principal.
-pub trait SessionAuthN<Stream>:
-    Negotiator<AuthNResult<Self::AuthNSession, Stream>>
-    + NegotiatorStart<AuthNResult<Self::AuthNSession, Stream>, Stream>
+///
+/// # Usage
+///
+/// The actual authentication functionality for this trait is handled
+/// through the [`Negotiator`] and [`NegotiatorStart`] sub-traits.
+/// The [`NegotiatorStart::start`] function is used to start
+/// negotiations, which are then run using [`Negotiator::negotiate`]
+/// until they produce an [`AuthNResult`] indicating acceptance or
+/// rejection.
+///
+/// The functions defined in this trait are for recovering the session
+/// from an error, so it can be shut down properly.
+///
+/// # Type Parameters
+///
+/// - `Session`: Type of underlying raw sessions.
+pub trait SessionAuthN<Session>:
+    Negotiator<AuthNResult<Self::AuthNSession, Session>>
+    + NegotiatorStart<AuthNResult<Self::AuthNSession, Session>, Session>
 where
-    Stream: Read + Write {
+    Session: Read + Write {
     /// Type of session prinicpals.
     type Prin: Clone + Debug + Display + Eq + Hash;
     /// Type of authenticated flows produced by this authenticator.
     type AuthNSession: AuthNed<Self::Prin>;
 
-    /// Try to recover the underlying stream from a negotiation error.
+    /// Try to recover the underlying session from a negotiation error.
+    ///
+    /// Default behavior is to fail.
+    ///
+    /// # Parameters
+    ///
+    /// - `err`: The error from which to recover the underying session.
     #[inline]
     fn err_stream(
         &self,
         _err: Self::NegotiateError
-    ) -> Option<Stream> {
+    ) -> Option<Session> {
         None
     }
 
-    /// Try to recover the underlying stream from a negotiation error.
+    /// Try to recover the underlying session from a negotiation error.
+    ///
+    /// Default behavior is to fail.
+    ///
+    /// # Parameters
+    ///
+    /// - `err`: The error from which to recover the underying session.
     #[inline]
     fn start_err_stream(
         &self,
         _err: Self::StartError
-    ) -> Option<Stream> {
+    ) -> Option<Session> {
         None
     }
 }
@@ -145,7 +258,17 @@ where
 /// received.  They can, however, change the principal associated with
 /// the message, and may use a wholly-different principal type.
 ///
+/// These authenticators may also change the type of the message, for
+/// example, uwnrapping it from an envelope (e.g. CMS messages).
+///
 /// This permits message authenticators to handle forwarded messages.
+///
+/// # Type Parameters
+///
+/// - `Msg`: The type of message payloads resulting from message authentication.
+///
+/// - `Wrapper`: The type of input messages to message authentication. This may
+///   be an envelope type (e.g. CMS).
 pub trait MsgAuthN<Msg, Wrapper> {
     /// Type of session principals.
     type SessionPrin: Clone + Debug + Display + Eq + Hash;
@@ -158,27 +281,33 @@ pub trait MsgAuthN<Msg, Wrapper> {
 
     /// Authenticate a message.
     ///
-    /// This will return an [AuthNResult] containing a
-    /// [Prin](SessionAuthN::Prin) in the case of success.
+    /// This will return an [`AuthNResult`] containing a
+    /// [`Prin`](SessionAuthN::Prin) in the case of success.
     ///
     /// This can produce a different principal from the session
     /// principal, as will be the case with forwarded messages.
+    ///
+    /// # Parameters
+    ///
+    /// - `session_prin`: The session principal.
+    ///
+    /// - `msg`: The input message to be authenticated.
     fn msg_authn(
         &self,
-        session: &Self::SessionPrin,
+        session_prin: &Self::SessionPrin,
         msg: Wrapper
     ) -> Result<AuthNResult<Self::AuthNMsg, ()>, Self::Error>;
 }
 
-/// Type trait for relationships between [Decoder]s and [MsgAuthN]s.
+/// Type trait for relationships between [`Decoder`]s and [`MsgAuthN`]s.
 ///
 /// This is used to avoid complex type constraints on types that are
-/// decoded by an [Decoder], then subsequently authenticated (and
-/// possibly unwrapped) by a [MsgAuthN].
+/// decoded by an [`Decoder`], then subsequently authenticated (and
+/// possibly unwrapped) by a [`MsgAuthN`].
 ///
 /// # Type Parameters
 ///
-/// * `Msg`: Type of messages ultimately produced by this chain.
+/// - `Msg`: Type of messages ultimately produced by this chain.
 pub trait MsgAuthNTypes<Msg> {
     /// Type of wrapper messages.
     type Wrapper;
@@ -186,12 +315,18 @@ pub trait MsgAuthNTypes<Msg> {
     type Prin: Debug + Display + Clone;
     /// Type of session principals.
     type SessionPrin: Clone + Debug + Display + Eq + Hash;
+    /// Type of configuration objects for the
+    /// [`Decoder`](MsgAuthNTypes::Decoder);
     type DecoderConfig: Default;
+    /// Type of errors that can occur decoding with the
+    /// [`Decoder`](MsgAuthNTypes::Decoder);
     type DecodeError: Debug + Display;
-    /// Type of [Decoder]s used to decode messages of type
-    /// [Wrapper](AuthNTypes::Wrapper).
+    /// Type of [`Decoder`]s used to decode messages of type
+    /// [`Wrapper`](MsgAuthNTypes::Wrapper).
     type Decoder: Create<Config = Self::DecoderConfig>
         + Decoder<Self::Wrapper, DecodeError = Self::DecodeError>;
+    /// Type of authentication errors that can occur with
+    /// [`MsgAuthN`](MsgAuthNTypes::MsgAuthN).
     type AuthNError: Debug + Display;
     /// Type of message authenticators.
     type MsgAuthN: MsgAuthN<
@@ -203,26 +338,27 @@ pub trait MsgAuthNTypes<Msg> {
     >;
 }
 
-/// Type trait for relationships between [Decoder]s, [SessionAuthN]s,
-/// and [MsgAuthN]s.
+/// Type trait for relationships between [`Decoder`]s, [`SessionAuthN`]s,
+/// and [`MsgAuthN`]s.
 ///
 /// This is used to avoid complex type constraints on types that use
-/// [SessionAuthN]s to authenticate a session, which then supplies
-/// messages of a particular type that are decoded by an [Decoder],
+/// [`SessionAuthN`]s to authenticate a session, which then supplies
+/// messages of a particular type that are decoded by an [`Decoder`],
 /// then subsequently authenticated (and possibly unwrapped) by a
-/// [MsgAuthN].
+/// [`MsgAuthN`].
 ///
 /// # Type Parameters
 ///
-/// * `Stream`: Type of streams used by the [SessionAuthN] to authenticate
+/// - `Session`: Type of streams used by the [`SessionAuthN`] to authenticate
 ///   sessions.
-/// * `Msg`: Type of messages ultimately produced by this chain.
-pub trait AuthNTypes<Stream, Msg>
+///
+/// - `Msg`: Type of messages ultimately produced by this chain.
+pub trait AuthNTypes<Session, Msg>
 where
-    Stream: Credentials + Read + Write {
+    Session: Credentials + Read + Write {
     /// Type of session authenticators.
     type SessionAuthN: SessionAuthN<
-        Stream,
+        Session,
         Prin = <Self::MsgAuthNTypes as MsgAuthNTypes<Msg>>::SessionPrin
     >;
     /// Message authenticator type trait.
@@ -245,6 +381,14 @@ pub enum SessionAuthNError<Cred, AuthN> {
 }
 
 /// Type of results from authentication.
+///
+/// This indicates either acceptance or rejection of authentication.
+///
+/// # Type Parameters
+///
+/// - `Accept`: Type produced upon acceptance.
+///
+/// - `Reject`: Type produced upon rejection.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AuthNResult<Accept, Reject> {
     /// Authentication was successful.
@@ -253,35 +397,68 @@ pub enum AuthNResult<Accept, Reject> {
     Reject(Reject)
 }
 
+// XXX This should be converted to an alias for a general trivial
+// [`Negotiator`] instance.
+
+/// Trivial session authenticator.
+///
+/// This automatically passes every session, producing [`NullCred`] as
+/// its session principl.
 #[derive(Clone)]
-pub struct PassthruSessionAuthN<Stream> {
-    stream: PhantomData<Stream>
+pub struct PassthruSessionAuthN<Session> {
+    stream: PhantomData<Session>
 }
 
-pub struct PassthruSessionNegotiation<Stream> {
-    stream: Stream
+/// Type of negotiation for [`PassthruSessionAuthN`].
+pub struct PassthruSessionNegotiation<Session> {
+    stream: Session
 }
 
-/// Simple message authenticator that associates the session principal
-/// with each message.
+/// Simple message authenticator that passes every message with the
+/// session principal.
+///
+/// *This is a placeholder, and will eventually be relegated to
+/// testing.*
 pub struct PassthruMsgAuthN<Msg, Prin: Clone + Display> {
     prin: PhantomData<Prin>,
     msg: PhantomData<Msg>
 }
 
-pub struct TrivialSessionNegotiation<Stream> {
-    stream: Stream
+pub struct TrivialSessionNegotiation<Session> {
+    stream: Session
 }
 
 #[derive(Clone)]
-pub struct TrivialAuthN<Cred: Clone + Eq + Hash, Stream> {
-    stream: PhantomData<Stream>,
+pub struct TrivialAuthN<Cred: Clone + Eq + Hash, Session> {
+    stream: PhantomData<Session>,
     cred: PhantomData<Cred>
 }
 
+/// A simple wrapper for authenticated objects.
+///
+/// This is usable as an [`AuthNed`] instance for nearly all
+/// [`SessionAuthN`] and [`MsgAuthN`] instances' authenticated types.
+/// However, this type should *never* be directly referenced outside
+/// of an instance for these traits.
+///
+/// The fact that [`AuthNed`] and its subtraits provide no means of
+/// creating an [`AuthNed`] instance, and the fact that authenticated
+/// objects from [`SessionAuthN`] and [`MsgAuthN`] are associated
+/// types of those traits provides a strong type-level protection
+/// against failing to authenticate an object prior to using it.
+/// Directly referencing `BasicAuthNed` risks bypassing this
+/// type-level protection.
+///
+/// # Type Parameters
+///
+/// - `Prin`: Type of prinicpals.
+///
+/// - `T`: Type of inner objects.
 #[derive(Clone)]
 pub struct BasicAuthNed<Prin, T> {
+    /// The principal.
     prin: Prin,
+    /// The inner object.
     content: T
 }
 
@@ -304,6 +481,17 @@ where
 }
 
 impl<Accept, Reject> AuthNResult<Accept, Reject> {
+    /// Apply a transformation to the acceptance of an `AuthNResult`.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `F`: Type of the transformation function.
+    ///
+    /// - `T`: The result type of the transformation
+    ///
+    /// # Parameters
+    ///
+    /// - `f`: The transformation to apply.
     pub fn map<F, T>(
         self,
         f: F
@@ -316,6 +504,21 @@ impl<Accept, Reject> AuthNResult<Accept, Reject> {
         }
     }
 
+    /// Apply a transformation to the acceptance of an `AuthNResult`.
+    ///
+    /// This variant permits the transformation to fail with an error.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `F`: Type of the transformation function.
+    ///
+    /// - `T`: The result type of the transformation
+    ///
+    /// - `E`: Type of errors that can occur.
+    ///
+    /// # Parameters
+    ///
+    /// - `f`: The transformation to apply.
     pub fn map_ok<F, T, E>(
         self,
         f: F
@@ -330,6 +533,19 @@ impl<Accept, Reject> AuthNResult<Accept, Reject> {
 }
 
 impl<Prin, T> BasicAuthNed<Prin, T> {
+    /// Create a `BasicAuthNed` from its components.
+    ///
+    /// # Warning
+    ///
+    /// Do not *ever* use this function outside a [`SessionAuthN`] or
+    /// [`MsgAuthN`] trait implementation.  See the main documentation
+    /// of [`BasicAuthNed`] for more details.
+    ///
+    /// # Parameters
+    ///
+    /// - `prin`: The principal.
+    ///
+    /// - `content`: The inner object
     #[inline]
     pub(crate) fn new(
         prin: Prin,
@@ -341,11 +557,13 @@ impl<Prin, T> BasicAuthNed<Prin, T> {
         }
     }
 
+    /// Get a reference to the inner object.
     #[inline]
     pub fn get(&self) -> &T {
         &self.content
     }
 
+    /// Get a mutable reference to the inner object.
     #[inline]
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.content
@@ -479,17 +697,17 @@ where
     }
 }
 
-unsafe impl<Cred, Stream> Send for TrivialAuthN<Cred, Stream> where
+unsafe impl<Cred, Session> Send for TrivialAuthN<Cred, Session> where
     Cred: Clone + Eq + Hash
 {
 }
 
-unsafe impl<Cred, Stream> Sync for TrivialAuthN<Cred, Stream> where
+unsafe impl<Cred, Session> Sync for TrivialAuthN<Cred, Session> where
     Cred: Clone + Eq + Hash
 {
 }
 
-impl<Cred, Stream, Ctx> CreateWithParam<Ctx> for TrivialAuthN<Cred, Stream>
+impl<Cred, Session, Ctx> CreateWithParam<Ctx> for TrivialAuthN<Cred, Session>
 where
     Cred: Clone + Eq + Hash
 {
@@ -505,7 +723,7 @@ where
     }
 }
 
-impl<Cred, Stream> Default for TrivialAuthN<Cred, Stream>
+impl<Cred, Session> Default for TrivialAuthN<Cred, Session>
 where
     Cred: Clone + Eq + Hash
 {
@@ -612,9 +830,9 @@ where
     }
 }
 
-impl<Stream> Default for PassthruSessionAuthN<Stream>
+impl<Session> Default for PassthruSessionAuthN<Session>
 where
-    Stream: Credentials + Read + Write
+    Session: Credentials + Read + Write
 {
     #[inline]
     fn default() -> Self {
@@ -624,23 +842,23 @@ where
     }
 }
 
-impl<Stream> Negotiator<AuthNResult<BasicAuthNed<NullCred, Stream>, Stream>>
-    for PassthruSessionAuthN<Stream>
+impl<Session> Negotiator<AuthNResult<BasicAuthNed<NullCred, Session>, Session>>
+    for PassthruSessionAuthN<Session>
 where
-    Stream: Credentials + Read + Write
+    Session: Credentials + Read + Write
 {
     type NegotiateError = Infallible;
     type Pending = Infallible;
-    type State = PassthruSessionNegotiation<Stream>;
+    type State = PassthruSessionNegotiation<Session>;
 
     /// Perform negotiations.
     #[inline]
     fn negotiate(
         &self,
-        state: PassthruSessionNegotiation<Stream>
+        state: PassthruSessionNegotiation<Session>
     ) -> Result<
         NegotiatorResult<
-            AuthNResult<BasicAuthNed<NullCred, Stream>, Stream>,
+            AuthNResult<BasicAuthNed<NullCred, Session>, Session>,
             Self::Pending
         >,
         Self::NegotiateError
@@ -659,7 +877,7 @@ where
         _err: Infallible
     ) -> Result<
         NegotiatorResult<
-            AuthNResult<BasicAuthNed<NullCred, Stream>, Stream>,
+            AuthNResult<BasicAuthNed<NullCred, Session>, Session>,
             Self::Pending
         >,
         Self::NegotiateError
@@ -668,11 +886,13 @@ where
     }
 }
 
-impl<Stream>
-    NegotiatorStart<AuthNResult<BasicAuthNed<NullCred, Stream>, Stream>, Stream>
-    for PassthruSessionAuthN<Stream>
+impl<Session>
+    NegotiatorStart<
+        AuthNResult<BasicAuthNed<NullCred, Session>, Session>,
+        Session
+    > for PassthruSessionAuthN<Session>
 where
-    Stream: Credentials + Read + Write
+    Session: Credentials + Read + Write
 {
     type Param = ();
     type StartError = Infallible;
@@ -681,8 +901,8 @@ where
     fn start(
         &self,
         _param: &(),
-        stream: Stream
-    ) -> Result<PassthruSessionNegotiation<Stream>, Self::StartError> {
+        stream: Session
+    ) -> Result<PassthruSessionNegotiation<Session>, Self::StartError> {
         Ok(PassthruSessionNegotiation { stream: stream })
     }
 }
@@ -695,14 +915,14 @@ where
     type Prin = NullCred;
 }
 
-impl<Stream, Prin>
-    NegotiatorStart<AuthNResult<BasicAuthNed<Prin, Stream>, Stream>, Stream>
-    for TrivialAuthN<Prin, Stream>
+impl<Session, Prin>
+    NegotiatorStart<AuthNResult<BasicAuthNed<Prin, Session>, Session>, Session>
+    for TrivialAuthN<Prin, Session>
 where
     Prin: Clone + Default + Display + Eq + Hash,
-    Stream::Cred: TryInto<Prin>,
-    Stream: Credentials + Read + Write,
-    Stream::CredError: ScopedError
+    Session::Cred: TryInto<Prin>,
+    Session: Credentials + Read + Write,
+    Session::CredError: ScopedError
 {
     type Param = ();
     type StartError = Infallible;
@@ -711,32 +931,33 @@ where
     fn start(
         &self,
         _param: &(),
-        stream: Stream
-    ) -> Result<TrivialSessionNegotiation<Stream>, Self::StartError> {
+        stream: Session
+    ) -> Result<TrivialSessionNegotiation<Session>, Self::StartError> {
         Ok(TrivialSessionNegotiation { stream: stream })
     }
 }
 
-impl<Stream, Prin> Negotiator<AuthNResult<BasicAuthNed<Prin, Stream>, Stream>>
-    for TrivialAuthN<Prin, Stream>
+impl<Session, Prin>
+    Negotiator<AuthNResult<BasicAuthNed<Prin, Session>, Session>>
+    for TrivialAuthN<Prin, Session>
 where
     Prin: Clone + Default + Display + Eq + Hash,
-    Stream::Cred: TryInto<Prin>,
-    Stream: Credentials + Read + Write,
-    Stream::CredError: ScopedError
+    Session::Cred: TryInto<Prin>,
+    Session: Credentials + Read + Write,
+    Session::CredError: ScopedError
 {
-    type NegotiateError = SessionAuthNError<Stream::CredError, Infallible>;
+    type NegotiateError = SessionAuthNError<Session::CredError, Infallible>;
     type Pending = Infallible;
-    type State = TrivialSessionNegotiation<Stream>;
+    type State = TrivialSessionNegotiation<Session>;
 
     /// Perform negotiations.
     #[inline]
     fn negotiate(
         &self,
-        state: TrivialSessionNegotiation<Stream>
+        state: TrivialSessionNegotiation<Session>
     ) -> Result<
         NegotiatorResult<
-            AuthNResult<BasicAuthNed<Prin, Stream>, Stream>,
+            AuthNResult<BasicAuthNed<Prin, Session>, Session>,
             Self::Pending
         >,
         Self::NegotiateError
@@ -789,7 +1010,7 @@ where
         _err: Infallible
     ) -> Result<
         NegotiatorResult<
-            AuthNResult<BasicAuthNed<Prin, Stream>, Stream>,
+            AuthNResult<BasicAuthNed<Prin, Session>, Session>,
             Self::Pending
         >,
         Self::NegotiateError

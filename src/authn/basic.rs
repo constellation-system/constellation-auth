@@ -16,6 +16,16 @@
 // License along with this program.  If not, see
 // <https://www.gnu.org/licenses/>.
 
+//! Basic credential-matching authenticator.
+//!
+//! This module provides [`BasicAuthN`], which provides a
+//! simple authenticator that matches credentials against a
+//! predetermined list of credentials, each of which corresponds to a
+//! single principal.
+//!
+//! *This module is something of a placeholder, and will eventually be
+//! replaced by more featureful authenticators.*
+
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -53,83 +63,189 @@ use crate::cred::Credentials;
 use crate::cred::GSSAPICred;
 use crate::cred::SSLCred;
 
+// XXX Need a MsgAuthN instance for this.
+
+/// Simplified credentials matched by [`BasicAuthN`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum BasicCred {
+    /// An IP address credential.
+    ///
+    /// This is unsafe, and should cause warnings to be emitted
+    /// whenever matched.
     IP {
+        /// The IP address to match.
         unsafe_addr: IPEndpoint
     },
+    /// A Unix socket credential.
     Unix {
+        /// The counterparty Unix socket path.
         addr: UnixSocketPath
     },
+    /// A TLS session credential.
     SSL {
+        /// The TLS session's Subject Name.
         subject_name: Vec<String>,
+        /// The inner channel's credentials, if they exist.
         inner: Option<Box<BasicCred>>
     },
     #[cfg(feature = "gssapi")]
+    /// A GSSAPI session credential.
     GSSAPI {
+        /// The GSSAPI principal name.
         name: String
     }
 }
 
+/// Port-matching information for IP addresses.
 enum BasicIPMatcher<Prin> {
-    Ports { ports: HashMap<u16, Prin> },
-    All { prin: Prin }
+    /// Match specific ports to principals.
+    Ports {
+        /// A map from port numbers to principals to be matched.
+        ports: HashMap<u16, Prin>
+    },
+    /// Match all ports to a principal.
+    All {
+        /// The principal for all ports.
+        prin: Prin
+    }
 }
 
+/// Matching information for TLS credentials
+///
+/// This provides information for the recursive descent for matching a
+/// TLS credential.
 enum BasicCredMatcherSSLEntry<Prin>
 where
     Prin: Clone + Debug + Display + Eq + Hash {
-    Prin { prin: Prin },
-    Matcher { matcher: Box<BasicAuthN<Prin>> }
+    /// Match to a principal.
+    Prin {
+        /// The principal.
+        prin: Prin
+    },
+    /// Recursively descend to another layer of matching.
+    Matcher {
+        /// The sub-authenticator to use to match the inner channel
+        /// credentials.
+        matcher: Box<BasicAuthN<Prin>>
+    }
 }
 
+/// A simple credential-matching authenticator.
+///
+/// This directly matches harvested credentials against a set of
+/// rules, which map specific credentials to a fixed principal.  The
+/// set of rules and credentials is static, and there is no way to
+/// specific "general" or "template" rules.
+///
+/// *This authenticator is a placeholder, and will eventually be
+/// replaced by more featureful ones.*
+///
+/// # Type Parameters
+///
+/// - `Prin`: Type of principals.
+///
+/// # Usage
+///
+/// `BasicAuthN` is typically not used directly, but is provided as a
+/// type satisfying various trait bounds.  If direct use is needed,
+/// the [`CreateWithParam`] instance is used to create a `BasicAuthN`,
+/// and the [`Negotiator`] and [`SessionAuthN`] instances are used as
+/// its primary API.
 pub struct BasicAuthN<Prin>
 where
     Prin: Clone + Debug + Display + Eq + Hash {
+    /// Matching infomation for IP addresses.
     unsafe_ip: Option<HashMap<IPEndpointAddr, BasicIPMatcher<Prin>>>,
+    /// Matching information for Unix sockets credentials.
     unix: Option<HashMap<UnixSocketPath, Prin>>,
+    /// Matching information for SSL credentials.
     ssl: Option<HashMap<Vec<String>, BasicCredMatcherSSLEntry<Prin>>>,
     #[cfg(feature = "gssapi")]
+    /// Matching information for GSSAPI credentials.
     gssapi: Option<HashMap<String, Prin>>
 }
 
+/// Errors that can occur convreting an [`SSLCred`] into a
+/// [`BasicCred`].
+///
+/// # Type Parameters
+///
+/// - `Inner`: Type of errors converting the inner channel credential.
 #[derive(Debug)]
 pub enum BasicCredFromSSLError<Inner> {
-    Inner { err: Inner },
-    SSL { err: openssl::ssl::Error }
+    /// An error occurred converting the inner channel credential.
+    Inner {
+        /// The error that occurred converting the inner channel
+        /// credential.
+        err: Inner
+    },
+    /// An error occurred accessing the required information.
+    SSL {
+        /// The `openssl` error that occurred accessing the required
+        /// information..
+        err: openssl::ssl::Error
+    }
 }
 
 #[cfg(feature = "gssapi")]
+/// Errors that can occur convreting a [`GSSAPICred`] into a
+/// [`BasicCred`].
 #[derive(Debug)]
 pub enum BasicCredGSSAPIError {
-    GSSAPI { err: libgssapi::error::Error },
-    UTF8 { err: FromUtf8Error }
+    /// An error occurred accessing the required information.
+    GSSAPI {
+        /// The `libgssapi` error that occurred accessing the required
+        /// information..
+        err: libgssapi::error::Error
+    },
+    /// An error occurred converting the principal name to UTF-8.
+    UTF8 {
+        /// The error that occurred converting the principal name to
+        /// UTF-8.
+        err: FromUtf8Error
+    }
 }
 
+/// Errors that can occur creating a [`BasicAuthN`]
 #[derive(Debug)]
 pub enum BasicAuthNCreateError {
-    Cred {
-        err: std::io::Error
-    },
+    /// An IP address credential was specified multiple times.
     DuplicateIP {
+        /// The duplicate IP address.
         addr: IPEndpointAddr
     },
+    /// A Unix socket credential was specified multiple times.
     DuplicateUnix {
+        /// The duplicate Unix socket path.
         addr: UnixSocketPath
     },
+    /// A TLS credential was specified multiple times.
     DuplicateSSL {
+        /// The duplicate subject name.
         subject_name: Vec<String>
     },
     #[cfg(feature = "gssapi")]
+    /// A GSSAPI credential was specified multiple times.
     DuplicateGSSAPI {
+        /// The duplicate GSSAPI principal.
         name: String
     }
 }
 
+/// Errors that can occur while authenticating with a [`BasicAuthN`].
 #[derive(Debug)]
 pub enum BasicAuthNError<Cred, Into> {
-    Cred { err: Cred },
-    Into { err: Into }
+    /// An error occurred obtaining credentials.
+    Cred {
+        /// The error that occurred obtaining credentials.
+        err: Cred
+    },
+    /// An error occurred converting credentials to [`BasicCred`]s.
+    Into {
+        /// The error that occurred converting credentials to
+        /// [`BasicCred`]s.
+        err: Into
+    }
 }
 
 impl<Prin> Default for BasicAuthN<Prin>
@@ -152,6 +268,11 @@ impl<Prin> BasicIPMatcher<Prin>
 where
     Prin: Clone + Debug + Display + Eq + Hash
 {
+    /// Attempt to match an IP address.
+    ///
+    /// # Parameters
+    ///
+    /// - `addr`: The [`IPEndpoint`] to match.
     fn match_ip(
         &self,
         addr: &IPEndpoint
@@ -184,6 +305,11 @@ impl<Prin> BasicAuthN<Prin>
 where
     Prin: Clone + Debug + Display + Eq + Hash
 {
+    /// Attempt to match a [`BasicCred`].
+    ///
+    /// # Parameters
+    ///
+    /// - `addr`: The [`BasicCred`] to match.
     fn match_cred(
         &self,
         cred: &BasicCred
@@ -567,7 +693,6 @@ where
     type Pending = Infallible;
     type State = AuthNResult<BasicAuthNed<Prin, Flow>, Flow>;
 
-    /// Perform negotiations.
     #[inline]
     fn negotiate(
         &self,
@@ -805,9 +930,6 @@ impl Display for BasicAuthNCreateError {
         f: &mut Formatter<'_>
     ) -> Result<(), std::fmt::Error> {
         match self {
-            BasicAuthNCreateError::Cred { err } => {
-                write!(f, "error converting unix socket addr: {}", err)
-            }
             BasicAuthNCreateError::DuplicateIP { addr } => {
                 write!(f, "duplicate IP address credential: {}", addr)
             }
