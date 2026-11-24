@@ -82,6 +82,7 @@ use crate::cred::Credentials;
 use crate::cred::NullCred;
 
 pub mod basic;
+#[doc(hidden)]
 pub mod test;
 
 /// Trait for authenticated objects, produced by [`SessionAuthN`] or

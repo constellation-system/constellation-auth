@@ -44,6 +44,7 @@ use serde::Serialize;
 ///
 /// This is used primarily for testing purposes.  This may be removed
 /// in the future.
+#[doc(hidden)]
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename = "test-cred")]
 #[serde(untagged)]
@@ -68,6 +69,7 @@ pub enum TestCredConfig {
 ///
 /// This is used primarily for testing purposes.  This may be removed
 /// in the future.
+#[doc(hidden)]
 #[derive(
     Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
@@ -419,6 +421,7 @@ pub struct BasicAuthNConfig<Prin> {
 /// [`TestAuthN`](crate::authn::test::TestAuthN).
 ///
 /// This is primarily used for testing purposes.
+#[doc(hidden)]
 pub type TestAuthNConfig<Prin, Cred> = Vec<TestAuthNPrinConfig<Prin, Cred>>;
 
 /// Errors that can occur parsing a [`BasicIPMatcherConfig`].
